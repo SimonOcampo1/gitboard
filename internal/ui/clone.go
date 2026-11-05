@@ -19,19 +19,22 @@ type clonePopup struct {
 	input   textinput.Model
 	picking bool
 	picker  filepicker.Model
+	pickerH int
 	err     string
 }
 
 type cloneStartMsg struct{ repo, dest, target string }
 type cloneCancelMsg struct{}
 
-func newClonePopup(it item, dir string) (*clonePopup, tea.Cmd) {
+// width and height are the terminal's; the field and the Folder picker
+// shrink to fit them.
+func newClonePopup(it item, dir string, width, height int) (*clonePopup, tea.Cmd) {
 	in := textinput.New()
 	in.Prompt = "Destination: "
-	in.SetWidth(48)
+	in.SetWidth(max(10, min(48, width-24)))
 	in.SetValue(strings.TrimRight(dir, "/") + "/")
 	in.CursorEnd()
-	return &clonePopup{repo: it, input: in}, in.Focus()
+	return &clonePopup{repo: it, input: in, pickerH: max(3, min(12, height-12))}, in.Focus()
 }
 
 func (p *clonePopup) openPicker() tea.Cmd {
@@ -44,7 +47,7 @@ func (p *clonePopup) openPicker() tea.Cmd {
 	fp.DirAllowed, fp.FileAllowed = true, false
 	fp.ShowPermissions, fp.ShowSize = false, false
 	fp.AutoHeight = false
-	fp.SetHeight(12)
+	fp.SetHeight(p.pickerH)
 	// esc belongs to us (close the picker), not to filepicker's "back".
 	fp.KeyMap.Back = key.NewBinding(key.WithKeys("h", "backspace", "left"))
 	p.picker, p.picking = fp, true
@@ -96,15 +99,17 @@ func (p *clonePopup) update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-func (p *clonePopup) view() string {
+// view renders the popup at most width cells wide, wrapping the hints.
+func (p *clonePopup) view(width int) string {
+	box := popupStyle.Width(width)
 	title := brand.Render("Clone " + p.repo.repo)
 	if p.picking {
-		return popupStyle.Render(title + "\n" + faint.Render(paths.Tilde(p.picker.CurrentDirectory)) + "\n\n" +
+		return box.Render(title + "\n" + faint.Render(paths.Tilde(p.picker.CurrentDirectory)) + "\n\n" +
 			p.picker.View() + "\n" + faint.Render("j/k move · l open · h up · space choose this folder · esc back"))
 	}
 	body := title + "\n" + p.input.View() + "\n"
 	if p.err != "" {
 		body += errStyle.Render(p.err) + "\n"
 	}
-	return popupStyle.Render(body + "\n" + faint.Render("tab complete · ctrl+o browse · enter clone · esc cancel"))
+	return box.Render(body + "\n" + faint.Render("tab complete · ctrl+o browse · enter clone · esc cancel"))
 }

@@ -20,11 +20,17 @@ import (
 	"github.com/SimonOcampo1/gitboard/internal/config"
 	"github.com/SimonOcampo1/gitboard/internal/gh"
 	"github.com/SimonOcampo1/gitboard/internal/paths"
-	"github.com/cli/go-gh/v2/pkg/browser"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/cli/browser"
 )
 
-// The Sidebar opens on its own from this width up, until p toggles it.
-const sidebarMinWidth = 120
+const (
+	// The Sidebar opens on its own from this width up, until p toggles it.
+	sidebarMinWidth = 120
+	// Below this, the Sidebar does not fit next to a usable table.
+	sidebarMinCols = 24
+	tableMinWidth  = 40
+)
 
 type Model struct {
 	client  *gh.Client
@@ -34,19 +40,23 @@ type Model struct {
 	active  int
 	all     [5][]item
 	shown   [5][]item
+	keep    [5][]int // visible columns of each view, as indexes into item.cols
 	tables  [5]table.Model
 	loading [5]bool
 	errs    [5]error
 
 	filter    textinput.Model
 	filtering bool
+	repo      string // when set, every view shows this repo only
+	byRepo    bool   // group rows by repo
 
 	sidebarToggled bool // p was pressed: stop following the width
-	sidebarOn      bool
+	sidebarWanted  bool
+	sidebarOn      bool // wanted and it fits
 	vp             viewport.Model
 	extra          map[string]string // on-demand Sidebar markdown, by item url
 	requested      map[string]bool
-	rendered       map[string]string // glamour output, by url + width
+	rendered       map[string]string // glamour output, by width + markdown
 
 	clone   *clonePopup
 	confirm string // url of the issue waiting for a second x
@@ -116,33 +126,65 @@ func (m *Model) setRows(v int) {
 	if v == m.active {
 		q = m.filter.Value()
 	}
-	m.shown[v] = filterItems(m.all[v], q)
+	m.shown[v] = arrange(m.all[v], q, m.repo, m.byRepo)
 	rows := make([]table.Row, len(m.shown[v]))
 	for i, it := range m.shown[v] {
-		rows[i] = it.cols
+		row := make(table.Row, 0, len(m.keep[v]))
+		for _, k := range m.keep[v] {
+			row = append(row, it.cols[k])
+		}
+		rows[i] = row
 	}
 	m.tables[v].SetRows(rows)
-	if m.tables[v].Cursor() >= len(rows) {
-		m.tables[v].SetCursor(max(0, len(rows)-1))
+	// Clearing the rows (see layout) leaves the cursor at -1: put it back on a row.
+	if c := m.tables[v].Cursor(); c < 0 || c >= len(rows) {
+		m.tables[v].SetCursor(max(0, min(c, len(rows)-1)))
 	}
+}
+
+func (m *Model) setAllRows() {
+	for v := range views {
+		m.setRows(v)
+	}
+}
+
+func (m *Model) bodyHeight() int {
+	return max(3, m.height-2-len(m.helpLines())) // header + status + help
 }
 
 func (m *Model) layout() {
 	if !m.sidebarToggled {
-		m.sidebarOn = m.width >= sidebarMinWidth
+		m.sidebarWanted = m.width >= sidebarMinWidth
 	}
-	bodyH := max(3, m.height-3) // header + status + help
+	bodyH := m.bodyHeight()
 	tw := m.width
-	if m.sidebarOn {
-		tw = m.width * 55 / 100
-		m.vp.SetWidth(m.width - tw - 2)
-		m.vp.SetHeight(bodyH - 2)
+	m.sidebarOn = false
+	if m.sidebarWanted {
+		tw = max(tableMinWidth, m.width*55/100)
+		if sw := m.width - tw - 2; sw >= sidebarMinCols {
+			m.sidebarOn = true
+			m.vp.SetWidth(sw)
+			m.vp.SetHeight(bodyH - 2)
+		} else {
+			tw = m.width
+		}
 	}
 	for i := range m.tables {
-		m.tables[i].SetColumns(fitColumns(views[i].columns, tw))
+		// Grouped by repo, the Repo column is what makes the groups visible.
+		mustKeep := ""
+		if m.byRepo {
+			mustKeep = "Repo"
+		}
+		cols, keep := fitColumnsKeeping(views[i].columns, views[i].drop, tw, mustKeep)
+		// The table reads rows with the old column count while columns
+		// change, so clear them first; setAllRows refills them.
+		m.tables[i].SetRows(nil)
+		m.keep[i] = keep
+		m.tables[i].SetColumns(cols)
 		m.tables[i].SetWidth(tw)
 		m.tables[i].SetHeight(bodyH)
 	}
+	m.setAllRows()
 }
 
 // refreshSidebar renders the selected item and asks for its on-demand part
@@ -165,18 +207,28 @@ func (m *Model) refreshSidebar() tea.Cmd {
 	} else if it.fetch != nil {
 		md = strings.TrimSpace(md + "\n\n_Loading…_")
 	}
-	w := m.vp.Width() - 2
-	key := fmt.Sprintf("%s|%d|%d", it.url, w, len(md))
+	w := m.vp.Width()
+	// The key holds the markdown itself: "_Loading…_" and "_No README._" have
+	// the same length, so keying by length served the loading text forever.
+	key := fmt.Sprintf("%d|%s", w, md)
 	out, ok := m.rendered[key]
 	if !ok {
 		// The dark style is fixed for now; detecting a light terminal is left for later.
-		r, err := glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(w))
+		// Glamour adds a 2-cell margin on each side, hence w-4.
+		r, err := glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(max(10, w-4)))
 		if err == nil {
 			out, err = r.Render(md)
 		}
 		if err != nil {
 			out = md
 		}
+		// Long words, URLs and code lines still overflow the wrap: cut them.
+		// Glamour can also emit tabs, which the terminal widens past the border.
+		lines := strings.Split(strings.ReplaceAll(out, "\t", "    "), "\n")
+		for i, l := range lines {
+			lines[i] = ansi.Truncate(l, w, "…")
+		}
+		out = strings.Join(lines, "\n")
 		m.rendered[key] = out
 	}
 	m.vp.SetContent(out)
@@ -196,6 +248,19 @@ func (m *Model) exec(view int, status string, c *exec.Cmd) tea.Cmd {
 	return tea.ExecProcess(c, func(err error) tea.Msg { return doneMsg{view, status, err} })
 }
 
+// openURL uses $BROWSER when it names a program that exists, and the
+// system's default browser otherwise (xdg-open, open, or the Windows
+// handler). A stale $BROWSER must not stop links from opening.
+func openURL(url string) error {
+	if b := strings.Fields(os.Getenv("BROWSER")); len(b) > 0 {
+		if path, err := exec.LookPath(b[0]); err == nil {
+			return exec.Command(path, append(b[1:], url)...).Start()
+		}
+	}
+	browser.Stdout, browser.Stderr = io.Discard, io.Discard
+	return browser.OpenURL(url)
+}
+
 // localClone is where the selected repo would be if it was cloned into the
 // last Clone destination.
 // It only looks in the last destination, so a clone made elsewhere is not found.
@@ -205,15 +270,19 @@ func (m *Model) localClone(it item) (string, bool) {
 	return dir, err == nil && fi.IsDir()
 }
 
+// Update never writes `return m, m.someMutatingMethod()`: Go does not fix
+// whether m is copied before or after the call runs, so the change could
+// be lost. The command is taken first and m returned after.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.layout()
-		return m, m.refreshSidebar()
+		cmd = m.refreshSidebar()
+		return m, cmd
 
 	case spinner.TickMsg:
-		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
 
@@ -223,9 +292,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.all[msg.view] = msg.items
 		m.setRows(msg.view)
 		if msg.view == m.active {
-			return m, m.refreshSidebar()
+			cmd = m.refreshSidebar()
 		}
-		return m, nil
+		return m, cmd
 
 	case extraMsg:
 		if msg.err != nil {
@@ -233,7 +302,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.extra[msg.url] = msg.md
 		}
-		return m, m.refreshSidebar()
+		cmd = m.refreshSidebar()
+		return m, cmd
 
 	case statusMsg:
 		m.status = string(msg)
@@ -245,9 +315,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "error: " + msg.err.Error()
 		}
 		if msg.view >= 0 {
-			return m, m.load(msg.view)
+			cmd = m.load(msg.view)
 		}
-		return m, nil
+		return m, cmd
 
 	case cloneCancelMsg:
 		m.clone = nil
@@ -257,11 +327,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clone = nil
 		m.cfg.CloneDir = msg.dest
 		_ = config.Save(m.cfgPath, m.cfg)
-		return m, m.exec(-1, "cloned into "+paths.Tilde(msg.target), exec.Command("gh", "repo", "clone", msg.repo, msg.target))
+		cmd = m.exec(-1, "cloned into "+paths.Tilde(msg.target), exec.Command("gh", "repo", "clone", msg.repo, msg.target))
+		return m, cmd
 	}
 
 	if m.clone != nil {
-		return m, m.clone.update(msg)
+		cmd = m.clone.update(msg)
+		return m, cmd
 	}
 
 	k, ok := msg.(tea.KeyPressMsg)
@@ -269,9 +341,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.filtering {
-		return m, m.updateFilter(k)
+		cmd = m.updateFilter(k)
+	} else {
+		cmd = m.handleKey(k)
 	}
-	return m, m.handleKey(k)
+	return m, cmd
 }
 
 func (m *Model) updateFilter(k tea.KeyPressMsg) tea.Cmd {
@@ -303,20 +377,37 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		return tea.Quit
 	case "1", "2", "3", "4", "5":
 		return m.switchTo(int(key[0] - '1'))
-	case "tab":
+	case "tab", "right", "L":
 		return m.switchTo((m.active + 1) % len(views))
-	case "shift+tab":
+	case "shift+tab", "left", "H":
 		return m.switchTo((m.active + len(views) - 1) % len(views))
 	case "/":
 		m.filtering = true
 		return m.filter.Focus()
 	case "esc":
 		m.filter.SetValue("")
-		m.setRows(m.active)
+		m.repo = ""
+		m.setAllRows()
+		return m.refreshSidebar()
+	case "f":
+		if m.repo != "" {
+			m.repo = ""
+		} else if has {
+			m.repo = it.repo
+		}
+		m.setAllRows()
+		m.tables[m.active].SetCursor(0)
+		return m.refreshSidebar()
+	case "s":
+		m.byRepo = !m.byRepo
+		m.layout()
 		return m.refreshSidebar()
 	case "p":
-		m.sidebarToggled, m.sidebarOn = true, !m.sidebarOn
+		m.sidebarToggled, m.sidebarWanted = true, !m.sidebarWanted
 		m.layout()
+		if m.sidebarWanted && !m.sidebarOn {
+			m.status = "the sidebar needs a wider terminal"
+		}
 		return m.refreshSidebar()
 	case "r":
 		m.status = ""
@@ -350,7 +441,7 @@ func (m *Model) quickAction(key string, it item) (tea.Cmd, bool) {
 	if key == "o" {
 		url := it.url
 		return func() tea.Msg {
-			if err := browser.New("", io.Discard, io.Discard).Browse(url); err != nil {
+			if err := openURL(url); err != nil {
 				return statusMsg("error: " + err.Error())
 			}
 			return statusMsg("opened " + url)
@@ -360,7 +451,7 @@ func (m *Model) quickAction(key string, it item) (tea.Cmd, bool) {
 	case vRepos:
 		switch key {
 		case "c":
-			p, cmd := newClonePopup(it, m.cfg.CloneDir)
+			p, cmd := newClonePopup(it, m.cfg.CloneDir, m.width, m.height)
 			m.clone = p
 			return cmd, true
 		case "g", "n":
@@ -414,23 +505,43 @@ func (m *Model) quickAction(key string, it item) (tea.Cmd, bool) {
 	return nil, false
 }
 
+// header drops detail until it fits: first the login, then the counts,
+// then the inactive tabs. Whatever is still too wide is cut.
 func (m Model) header() string {
-	var tabs []string
-	for i, v := range views {
-		label := fmt.Sprintf("%d %s", i+1, v.name)
-		if !m.loading[i] && m.errs[i] == nil {
-			label += fmt.Sprintf(" %d", len(m.all[i]))
+	tabs := func(counts, onlyActive bool) string {
+		var out []string
+		for i, v := range views {
+			if onlyActive && i != m.active {
+				continue
+			}
+			label := v.name
+			if counts && !m.loading[i] && m.errs[i] == nil {
+				label += " " + fmt.Sprint(len(m.shown[i]))
+			}
+			if i == m.active {
+				out = append(out, tabActive.Render(label))
+			} else {
+				out = append(out, tabIdle.Render(label))
+			}
 		}
-		if i == m.active {
-			tabs = append(tabs, tabActive.Render(label))
-		} else {
-			tabs = append(tabs, tabIdle.Render(label))
+		return strings.Join(out, "")
+	}
+	login := faint.Render("@"+m.client.Login) + " "
+	for _, try := range []struct{ counts, onlyActive, login bool }{
+		{true, false, true}, {true, false, false}, {false, false, false}, {true, true, false}, {false, true, false},
+	} {
+		left := brand.Render("gitboard") + tabs(try.counts, try.onlyActive)
+		if !try.login {
+			if lipgloss.Width(left) <= m.width {
+				return left
+			}
+			continue
+		}
+		if gap := m.width - lipgloss.Width(left) - lipgloss.Width(login); gap >= 1 {
+			return left + strings.Repeat(" ", gap) + login
 		}
 	}
-	left := brand.Render("gitboard") + strings.Join(tabs, "")
-	right := faint.Render("@"+m.client.Login) + " "
-	gap := max(1, m.width-lipgloss.Width(left)-lipgloss.Width(right))
-	return left + strings.Repeat(" ", gap) + right
+	return ansi.Truncate(brand.Render("gitboard")+tabs(false, true), m.width, "…")
 }
 
 func (m Model) body() string {
@@ -450,28 +561,62 @@ func (m Model) body() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, t, panel.Render(m.vp.View()))
 }
 
+// helpLines wraps the key hints to the terminal width instead of letting
+// the last ones fall off the edge.
+func (m *Model) helpLines() []string {
+	hints := []string{"tab views", "j/k move", "/ filter", "f this repo", "s group by repo",
+		"o open", "p sidebar", "r refresh", "q quit"}
+	hints = append(hints, strings.Split(views[m.active].help, " · ")...)
+	width := max(20, m.width)
+	var lines []string
+	line := ""
+	for _, h := range hints {
+		switch {
+		case line == "":
+			line = h
+		case lipgloss.Width(line)+3+lipgloss.Width(h) <= width:
+			line += " · " + h
+		default:
+			lines = append(lines, line)
+			line = h
+		}
+	}
+	return append(lines, line)
+}
+
 func (m Model) footer() string {
-	status := m.status
+	var parts []string
 	if m.filtering || m.filter.Value() != "" {
-		status = m.filter.View()
+		parts = append(parts, m.filter.View())
 	}
-	line := faint.Render("1-5 views · j/k move · / filter · o open · p sidebar · r refresh · q quit · ") + views[m.active].help
-	if strings.HasPrefix(status, "error") || strings.HasPrefix(status, "could not") {
-		status = errStyle.Render(status)
+	if m.repo != "" {
+		parts = append(parts, brand.Render("repo: "+m.repo)+faint.Render(" (f to clear)"))
 	}
-	return status + "\n" + line
+	if m.byRepo {
+		parts = append(parts, faint.Render("grouped by repo"))
+	}
+	if m.status != "" {
+		s := m.status
+		if strings.HasPrefix(s, "error") || strings.HasPrefix(s, "could not") {
+			s = errStyle.Render(s)
+		}
+		parts = append(parts, s)
+	}
+	status := ansi.Truncate(strings.Join(parts, "  "), m.width, "…")
+	return status + "\n" + faint.Render(strings.Join(m.helpLines(), "\n"))
 }
 
 func (m Model) View() tea.View {
 	if m.width == 0 {
 		return tea.NewView("")
 	}
-	body := m.body()
-	bodyH := max(3, m.height-3)
+	bodyH := m.bodyHeight()
+	var body string
 	if m.clone != nil {
-		body = lipgloss.Place(m.width, bodyH, lipgloss.Center, lipgloss.Center, m.clone.view())
+		popup := m.clone.view(max(20, min(70, m.width-2)))
+		body = lipgloss.Place(m.width, bodyH, lipgloss.Center, lipgloss.Center, popup)
 	} else {
-		body = lipgloss.NewStyle().Height(bodyH).MaxHeight(bodyH).Render(body)
+		body = lipgloss.NewStyle().Height(bodyH).MaxHeight(bodyH).Render(m.body())
 	}
 	v := tea.NewView(m.header() + "\n" + body + "\n" + m.footer())
 	v.AltScreen = true

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ type item struct {
 	name   string // repo name only (Repos view)
 	number int    // PR or issue number
 	sha    string
-	md     string                         // Sidebar markdown known up front
+	md     string                           // Sidebar markdown known up front
 	fetch  func(*gh.Client) (string, error) // extra Sidebar markdown loaded on demand
 }
 
@@ -35,6 +36,12 @@ func ago(t time.Time) string {
 		return fmt.Sprintf("%dw", int(d.Hours()/24/7))
 	}
 	return fmt.Sprintf("%dy", int(d.Hours()/24/365))
+}
+
+// shortRepo drops the owner from repos of the signed-in account, so the
+// Repo column spends its width on the name. Other owners stay visible.
+func shortRepo(repo, login string) string {
+	return strings.TrimPrefix(repo, login+"/")
 }
 
 func repoItems(rs []gh.Repo) []item {
@@ -72,7 +79,7 @@ func prState(p gh.PR) string {
 	return "open"
 }
 
-func prItems(ps []gh.PR) []item {
+func prItems(ps []gh.PR, login string) []item {
 	var out []item
 	for _, p := range ps {
 		checks := p.Checks
@@ -81,20 +88,20 @@ func prItems(ps []gh.PR) []item {
 		}
 		md := fmt.Sprintf("# %s\n\n`%s#%d` · %s · checks: %s\n\n%s", p.Title, p.Repo, p.Number, prState(p), strings.ToLower(checks), p.Body)
 		out = append(out, item{
-			cols: []string{p.Title, fmt.Sprintf("%s#%d", p.Repo, p.Number), prState(p), strings.ToLower(checks), ago(p.UpdatedAt)},
+			cols: []string{p.Title, fmt.Sprintf("%s#%d", shortRepo(p.Repo, login), p.Number), prState(p), strings.ToLower(checks), ago(p.UpdatedAt)},
 			url:  p.URL, repo: p.Repo, number: p.Number, md: md,
 		})
 	}
 	return out
 }
 
-func commitItems(cs []gh.Commit) []item {
+func commitItems(cs []gh.Commit, login string) []item {
 	var out []item
 	for _, c := range cs {
 		subject, _, _ := strings.Cut(c.Message, "\n")
 		repo, sha := c.Repo, c.SHA
 		out = append(out, item{
-			cols: []string{subject, c.Repo, c.SHA[:7], ago(c.Date)},
+			cols: []string{subject, shortRepo(c.Repo, login), c.SHA[:7], ago(c.Date)},
 			url:  c.URL, repo: repo, sha: sha,
 			md: fmt.Sprintf("`%s` · `%s`\n\n```\n%s\n```", repo, sha[:7], c.Message),
 			fetch: func(cl *gh.Client) (string, error) {
@@ -106,7 +113,7 @@ func commitItems(cs []gh.Commit) []item {
 	return out
 }
 
-func issueItems(is []gh.Issue) []item {
+func issueItems(is []gh.Issue, login string) []item {
 	var out []item
 	for _, i := range is {
 		labels := strings.Join(i.Labels, ", ")
@@ -115,9 +122,24 @@ func issueItems(is []gh.Issue) []item {
 			md += " · " + labels
 		}
 		out = append(out, item{
-			cols: []string{i.Title, fmt.Sprintf("%s#%d", i.Repo, i.Number), labels, ago(i.UpdatedAt)},
+			cols: []string{i.Title, fmt.Sprintf("%s#%d", shortRepo(i.Repo, login), i.Number), labels, ago(i.UpdatedAt)},
 			url:  i.URL, repo: i.Repo, number: i.Number, md: md + "\n\n" + i.Body,
 		})
+	}
+	return out
+}
+
+// arrange is what a view shows: the rows of repo only (when set), whose
+// text contains q, grouped by repo when byRepo is on.
+func arrange(items []item, q, repo string, byRepo bool) []item {
+	var out []item
+	for _, it := range filterItems(items, q) {
+		if repo == "" || it.repo == repo {
+			out = append(out, it)
+		}
+	}
+	if byRepo {
+		sort.SliceStable(out, func(i, j int) bool { return out[i].repo < out[j].repo })
 	}
 	return out
 }

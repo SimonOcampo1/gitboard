@@ -24,7 +24,7 @@ gitboard shows your GitHub account in one terminal window: your repos, your open
 
 ## Features
 
-- Five views on keys `1`-`5`: Repos, PRs, Commits, Reviews and Issues. All five load in parallel when it starts. Internally every view becomes the same kind of row, which is why `/` filters and the sidebar behave the same in all of them.
+- Five views, switched with `Tab` or the arrows: Repos, PRs, Commits, Reviews and Issues. All five load in parallel when it starts. Internally every view becomes the same kind of row, which is why `/` filters and the sidebar behave the same in all of them.
 - gitboard never asks you to log in. It borrows the session of the `gh` CLI through `go-gh`, so if `gh auth status` works, gitboard works.
 - `c` clones the selected repo. The prompt starts at the last folder you cloned into, `Tab` completes paths the way your shell does, and `Ctrl+O` opens a small folder browser. If the target folder already exists, it stops and tells you instead of cloning on top of it.
 - The sidebar shows a repo's README, a PR's description and checks, or a commit's full message and the files it touched. It fetches each one the first time you land on the row, renders it with Glamour and keeps it.
@@ -35,10 +35,12 @@ gitboard shows your GitHub account in one terminal window: your repos, your open
 
 | Where | Key | Action |
 |---|---|---|
-| Everywhere | `1`-`5` / `Tab` | Switch view |
+| Everywhere | `Tab` / `←` `→` (or `1`-`5`) | Switch view |
 | | `j` `k` | Move |
 | | `/` | Filter rows (`Enter` keeps it, `Esc` clears it) |
-| | `o` | Open in the browser |
+| | `f` | Show only the selected row's repo, in every view (`f` again clears it) |
+| | `s` | Group rows by repo |
+| | `o` | Open in your default browser (`$BROWSER` if it exists) |
 | | `p` | Toggle the sidebar (open by default from 120 columns) |
 | | `Ctrl+D` `Ctrl+U` | Scroll the sidebar |
 | | `r` | Reload the current view |
