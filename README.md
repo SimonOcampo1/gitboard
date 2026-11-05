@@ -4,7 +4,7 @@
 
 <p align="center">
   <img alt="Go" src="https://img.shields.io/badge/Go-00ADD8?style=flat-square&logo=go&logoColor=white">
-  <img alt="Bubble Tea" src="https://img.shields.io/badge/Bubble_Tea-v2-FF5F87?style=flat-square">
+  <img alt="Bubble Tea" src="https://img.shields.io/badge/Bubble_Tea-v2-FF5F87?style=flat-square&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMyAwaDJsLTIgN2gtMnoiLz48cGF0aCBkPSJNNCA3aDE2bC0xIDJINXoiLz48cGF0aCBkPSJNNS41IDEwaDEzbC0xLjYgMTIuMkEyIDIgMCAwIDEgMTQuOSAyNEg5LjFhMiAyIDAgMCAxLTItMS44eiIvPjxnIGZpbGw9IiNGRjVGODciPjxjaXJjbGUgY3g9IjkuNSIgY3k9IjE5IiByPSIxLjQiLz48Y2lyY2xlIGN4PSIxMyIgY3k9IjIwLjUiIHI9IjEuNCIvPjxjaXJjbGUgY3g9IjE1IiBjeT0iMTcuNSIgcj0iMS40Ii8%2BPC9nPjwvc3ZnPg%3D%3D">
   <img alt="GitHub CLI" src="https://img.shields.io/badge/gh_CLI-181717?style=flat-square&logo=github&logoColor=white">
 </p>
 
@@ -62,7 +62,7 @@ gitboard shows your GitHub account in one terminal window: your repos, your open
 | UI | Bubble Tea v2, Bubbles, Lip Gloss | The same stack as `gh-dash`. ANSI colors only, so the board takes your terminal's palette. |
 | Markdown | Glamour | Renders READMEs and PR bodies in the sidebar. |
 | GitHub | `go-gh` | Official client library of the `gh` CLI: its auth, GraphQL for repos, PRs and issues, REST for commit search. |
-| Config | `yaml.v3` | One value: the last clone destination, in `~/.config/gitboard/config.yml`. |
+| Config | `yaml.v3` | One value: the last clone destination, in `~/.config/gitboard/config.yml` (`%AppData%\gitboard` on Windows, `~/Library/Application Support/gitboard` on macOS). |
 
 ## Structure
 

@@ -9,13 +9,15 @@ import (
 
 func TestExpandAndTilde(t *testing.T) {
 	h, _ := os.UserHomeDir()
-	if got := Expand("~/repos"); got != filepath.Join(h, "repos") {
-		t.Fatalf("Expand = %q", got)
+	for _, in := range []string{"~/repos", "~" + Sep + "repos"} {
+		if got := Expand(in); got != filepath.Join(h, "repos") {
+			t.Fatalf("Expand(%q) = %q", in, got)
+		}
 	}
 	if got := Expand("/abs"); got != "/abs" {
 		t.Fatalf("Expand(/abs) = %q", got)
 	}
-	if got := Tilde(filepath.Join(h, "repos")); got != "~/repos" {
+	if got := Tilde(filepath.Join(h, "repos")); got != "~"+Sep+"repos" {
 		t.Fatalf("Tilde = %q", got)
 	}
 }
@@ -40,12 +42,13 @@ func TestCompleteDir(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(d, "readme.txt"), nil, 0o644)
 
+	d += Sep
 	cases := map[string]string{
-		d + "/no": d + "/notes/", // single match -> slash
-		d + "/re": d + "/repos",  // common prefix; the file readme.txt is ignored
-		d + "/zz": d + "/zz",     // no match -> unchanged
-		d + "/.h": d + "/.hidden/",
-		d + "/":   d + "/", // notes, repos, repos-old share no prefix
+		d + "no": d + "notes" + Sep, // single match -> separator
+		d + "re": d + "repos",       // common prefix; the file readme.txt is ignored
+		d + "zz": d + "zz",          // no match -> unchanged
+		d + ".h": d + ".hidden" + Sep,
+		d:        d, // notes, repos, repos-old share no prefix
 	}
 	for in, want := range cases {
 		if got := CompleteDir(in); got != want {

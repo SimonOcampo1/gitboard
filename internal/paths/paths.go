@@ -10,6 +10,12 @@ import (
 
 var ErrExists = errors.New("already exists")
 
+// Sep is the separator shown and appended in the prompt: \ on Windows, / elsewhere.
+const Sep = string(filepath.Separator)
+
+// seps are the separators a typed path may use: / always, \ too on Windows.
+const seps = "/" + Sep
+
 func home() string {
 	h, _ := os.UserHomeDir()
 	return h
@@ -20,7 +26,7 @@ func Expand(p string) string {
 	if p == "~" {
 		return home()
 	}
-	if strings.HasPrefix(p, "~/") {
+	if len(p) > 1 && p[0] == '~' && strings.ContainsRune(seps, rune(p[1])) {
 		return filepath.Join(home(), p[2:])
 	}
 	return p
@@ -54,7 +60,7 @@ func CloneTarget(dest, repoName string) (string, error) {
 // match when the segment starts with a dot.
 func CompleteDir(input string) string {
 	head, base := input, ""
-	if i := strings.LastIndex(input, "/"); i >= 0 {
+	if i := strings.LastIndexAny(input, seps); i >= 0 {
 		head, base = input[:i+1], input[i+1:]
 	} else {
 		head, base = "", input
@@ -82,7 +88,7 @@ func CompleteDir(input string) string {
 	case 0:
 		return input
 	case 1:
-		return head + matches[0] + "/"
+		return head + matches[0] + Sep
 	}
 	prefix := matches[0]
 	for _, m := range matches[1:] {

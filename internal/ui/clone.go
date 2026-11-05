@@ -32,7 +32,7 @@ func newClonePopup(it item, dir string, width, height int) (*clonePopup, tea.Cmd
 	in := textinput.New()
 	in.Prompt = "Destination: "
 	in.SetWidth(max(10, min(48, width-24)))
-	in.SetValue(strings.TrimRight(dir, "/") + "/")
+	in.SetValue(strings.TrimRight(dir, `/\`) + paths.Sep)
 	in.CursorEnd()
 	return &clonePopup{repo: it, input: in, pickerH: max(3, min(12, height-12))}, in.Focus()
 }
@@ -60,7 +60,7 @@ func (p *clonePopup) update(msg tea.Msg) tea.Cmd {
 		if isKey {
 			switch k.String() {
 			case "space":
-				p.input.SetValue(paths.Tilde(p.picker.CurrentDirectory) + "/")
+				p.input.SetValue(paths.Tilde(p.picker.CurrentDirectory) + paths.Sep)
 				p.input.CursorEnd()
 				p.picking = false
 				return nil
