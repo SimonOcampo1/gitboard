@@ -137,7 +137,7 @@ func issueItems(is []gh.Issue, login string) []item {
 	return out
 }
 
-// order is how a view sorts its rows; S cycles through them.
+// order is how a view sorts its rows; s cycles through them.
 type order int
 
 const (

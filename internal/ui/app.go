@@ -50,7 +50,7 @@ type Model struct {
 	repo      string // when set, every view shows this repo only
 	byRepo    bool   // group rows by repo
 	showHelp  bool   // ? expands the help line into every key
-	order     order  // S cycles it
+	order     order  // s cycles it
 
 	sidebarToggled bool // p was pressed: stop following the width
 	sidebarWanted  bool
@@ -463,13 +463,13 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		m.showHelp = !m.showHelp
 		m.layout()
 		return m.refreshSidebar()
-	case "S":
+	case "s":
 		m.order = (m.order + 1) % orderCount
 		m.setAllRows()
 		m.tables[m.active].SetCursor(0)
 		m.skipGroupRows(m.active, 1)
 		return m.refreshSidebar()
-	case "s":
+	case "b":
 		if m.active == vRepos {
 			return nil
 		}
@@ -644,17 +644,17 @@ func (m Model) body() string {
 // ones, wrapped to the terminal width. ? swaps the short list for all of them.
 func (m *Model) helpLines() []string {
 	hints := append([]hint{}, views[m.active].help...)
-	// In Repos, f focuses the other views on the selected repo, and s
+	// In Repos, f focuses the other views on the selected repo, and b
 	// (grouping) does not apply: every row is already a repo.
-	repoKeys := []hint{{"f", "repo"}, {"s", "group"}}
+	repoKeys := []hint{{"f", "repo"}, {"b", "group"}}
 	if m.showHelp {
-		repoKeys = []hint{{"f", "only this repo"}, {"s", "group by repo"}}
+		repoKeys = []hint{{"f", "only this repo"}, {"b", "group by repo"}}
 	}
-	repoKeys = append(repoKeys, hint{"S", "sort"})
+	repoKeys = append(repoKeys, hint{"s", "sort"})
 	if m.active == vRepos {
-		repoKeys = []hint{{"f", "focus"}, {"S", "sort"}}
+		repoKeys = []hint{{"f", "focus"}, {"s", "sort"}}
 		if m.showHelp {
-			repoKeys = []hint{{"f", "focus the other views on this repo"}, {"S", "sort"}}
+			repoKeys = []hint{{"f", "focus the other views on this repo"}, {"s", "sort"}}
 		}
 	}
 	if m.showHelp {
