@@ -140,13 +140,13 @@ func (c *Client) PRs(k Kind) ([]PR, error) {
 	var resp struct {
 		Search struct {
 			Nodes []struct {
-				Number                       int
-				Title, URL, Body             string
-				IsDraft                      bool
-				ReviewDecision               string
-				UpdatedAt                    time.Time
-				Repository                   struct{ NameWithOwner string }
-				Commits                      struct {
+				Number           int
+				Title, URL, Body string
+				IsDraft          bool
+				ReviewDecision   string
+				UpdatedAt        time.Time
+				Repository       struct{ NameWithOwner string }
+				Commits          struct {
 					Nodes []struct {
 						Commit struct {
 							StatusCheckRollup *struct{ State string }

@@ -45,7 +45,7 @@ func TestCompleteDir(t *testing.T) {
 		d + "/re": d + "/repos",  // common prefix; the file readme.txt is ignored
 		d + "/zz": d + "/zz",     // no match -> unchanged
 		d + "/.h": d + "/.hidden/",
-		d + "/":   d + "/",       // notes, repos, repos-old share no prefix
+		d + "/":   d + "/", // notes, repos, repos-old share no prefix
 	}
 	for in, want := range cases {
 		if got := CompleteDir(in); got != want {
