@@ -4,13 +4,14 @@ go 1.27.3
 
 require (
 	charm.land/bubbles/v2 v2.2.1
+	charm.land/bubbletea/v2 v2.0.8
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/cli/go-gh/v2 v2.17.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	charm.land/bubbletea/v2 v2.0.8 // indirect
+	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886 // indirect
@@ -22,6 +23,7 @@ require (
 	github.com/cli/shurcooL-graphql v0.0.4 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/henvic/httpretty v0.2.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
