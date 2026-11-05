@@ -16,7 +16,7 @@
   <a href="#install">Install</a>
 </p>
 
-gitboard puts your GitHub account in one terminal window: your repos, your open PRs, your latest commits, the reviews waiting on you and the issues assigned to you, each one a key away. It sits next to `gh-dash` (PRs and issues) and `lazygit` (local git) and covers the part neither does: the account as a whole.
+gitboard shows your GitHub account in one terminal window: your repos, your open PRs, your latest commits, the reviews waiting on you and the issues assigned to you. I use `gh-dash` for PRs and `lazygit` for local work, but I kept opening the browser just to find a repo, check what I pushed yesterday or clone something. This is that missing screen.
 
 <p align="center">
   <img src="docs/screenshot.png" alt="gitboard showing the Repos view with a README in the sidebar" width="100%">
@@ -24,12 +24,12 @@ gitboard puts your GitHub account in one terminal window: your repos, your open 
 
 ## Features
 
-- **Five views, one table.** Repos, PRs, Commits, Reviews and Issues, on keys `1`-`5`, all loaded in parallel on start. Every view is flattened into the same row type, so the filter (`/`) and the sidebar work the same everywhere.
-- **No login of its own.** It reuses the session of the `gh` CLI through `go-gh`. If `gh auth status` is fine, gitboard is too.
-- **Clone without leaving the board.** `c` opens a prompt that starts at the last folder you cloned into, completes paths with `Tab` like a shell, and opens a folders-only explorer with `Ctrl+O`. It refuses to clone into a folder that already exists.
-- **A sidebar that loads on demand.** The README of a repo, the body and checks of a PR, the full message and changed files of a commit. Fetched the first time a row is selected, rendered with Glamour, and cached.
-- **Hands off to the tools that already do it well.** Diffs, merges and approvals run through `gh`; `g` opens `lazygit` and `n` runs `gh pr create` inside your local clone.
-- **Every commit, automated ones included.** Commits come from GitHub's commit search, which indexes each repo's default branch: a commit on a feature branch shows up once it is merged.
+- Five views on keys `1`-`5`: Repos, PRs, Commits, Reviews and Issues. All five load in parallel when it starts. Internally every view becomes the same kind of row, which is why `/` filters and the sidebar behave the same in all of them.
+- gitboard never asks you to log in. It borrows the session of the `gh` CLI through `go-gh`, so if `gh auth status` works, gitboard works.
+- `c` clones the selected repo. The prompt starts at the last folder you cloned into, `Tab` completes paths the way your shell does, and `Ctrl+O` opens a small folder browser. If the target folder already exists, it stops and tells you instead of cloning on top of it.
+- The sidebar shows a repo's README, a PR's description and checks, or a commit's full message and the files it touched. It fetches each one the first time you land on the row, renders it with Glamour and keeps it.
+- Anything `gh` or `lazygit` already does well is handed to them. Diff, merge and approve call `gh`; `g` opens `lazygit` in your local clone and `n` runs `gh pr create` there.
+- Commits come from GitHub's commit search, which only indexes each repo's default branch. A commit on a feature branch shows up after you merge it. Bot and sync commits are listed too, on purpose.
 
 ## Keys
 
