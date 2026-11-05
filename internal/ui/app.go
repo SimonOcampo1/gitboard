@@ -141,7 +141,7 @@ func (m *Model) setRows(v int) {
 	if v == m.active {
 		q = m.filter.Value()
 	}
-	m.shown[v] = arrange(m.all[v], q, m.repo, m.byRepo)
+	m.shown[v] = arrange(m.all[v], q, m.repo, m.grouped(v))
 	cols := m.tables[v].Columns()
 	rows := make([]table.Row, len(m.shown[v]))
 	for i, it := range m.shown[v] {
@@ -188,6 +188,12 @@ func groupRow(it item, cols []table.Column, login string) table.Row {
 	return row
 }
 
+// grouped reports whether view v groups its rows by repo. Never in Repos:
+// every row there is already a repo.
+func (m *Model) grouped(v int) bool {
+	return m.byRepo && v != vRepos
+}
+
 func (m *Model) setAllRows() {
 	for v := range views {
 		m.setRows(v)
@@ -218,7 +224,7 @@ func (m *Model) layout() {
 	for i := range m.tables {
 		// Grouped by repo, the Repo column is what makes the groups visible.
 		mustKeep := ""
-		if m.byRepo {
+		if m.grouped(i) {
 			mustKeep = "Repo"
 		}
 		cols, keep := fitColumnsKeeping(views[i].columns, views[i].drop, tw, mustKeep)
@@ -457,6 +463,9 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		m.layout()
 		return m.refreshSidebar()
 	case "s":
+		if m.active == vRepos {
+			return nil
+		}
 		m.byRepo = !m.byRepo
 		m.layout()
 		return m.refreshSidebar()
@@ -628,14 +637,27 @@ func (m Model) body() string {
 // ones, wrapped to the terminal width. ? swaps the short list for all of them.
 func (m *Model) helpLines() []string {
 	hints := append([]hint{}, views[m.active].help...)
+	// In Repos, f focuses the other views on the selected repo, and s
+	// (grouping) does not apply: every row is already a repo.
+	repoKeys := []hint{{"f", "repo"}, {"s", "group"}}
 	if m.showHelp {
-		hints = append(hints, hint{"tab ←→", "view"}, hint{"j k", "move"}, hint{"/", "filter"},
-			hint{"f", "only this repo"}, hint{"s", "group by repo"}, hint{"esc", "clear filters"},
-			hint{"o", "open"}, hint{"p", "sidebar"}, hint{"^d ^u", "scroll sidebar"},
-			hint{"r", "reload"}, hint{"?", "less"}, hint{"q", "quit"})
+		repoKeys = []hint{{"f", "only this repo"}, {"s", "group by repo"}}
+	}
+	if m.active == vRepos {
+		repoKeys = []hint{{"f", "focus"}}
+		if m.showHelp {
+			repoKeys = []hint{{"f", "focus the other views on this repo"}}
+		}
+	}
+	if m.showHelp {
+		hints = append(hints, hint{"tab ←→", "view"}, hint{"j k", "move"}, hint{"/", "filter"})
+		hints = append(hints, repoKeys...)
+		hints = append(hints, hint{"esc", "clear filters"}, hint{"o", "open"}, hint{"p", "sidebar"},
+			hint{"^d ^u", "scroll sidebar"}, hint{"r", "reload"}, hint{"?", "less"}, hint{"q", "quit"})
 	} else {
-		hints = append(hints, hint{"/", "filter"}, hint{"f", "repo"}, hint{"s", "group"},
-			hint{"o", "open"}, hint{"?", "more"}, hint{"q", "quit"})
+		hints = append(hints, hint{"/", "filter"})
+		hints = append(hints, repoKeys...)
+		hints = append(hints, hint{"o", "open"}, hint{"?", "more"}, hint{"q", "quit"})
 	}
 	width := max(20, m.width)
 	var lines []string
@@ -663,7 +685,7 @@ func (m Model) footer() string {
 	if m.repo != "" {
 		parts = append(parts, brand.Render("repo: "+m.repo)+faint.Render(" (f to clear)"))
 	}
-	if m.byRepo {
+	if m.grouped(m.active) {
 		parts = append(parts, faint.Render("grouped by repo"))
 	}
 	if m.status != "" {

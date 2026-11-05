@@ -38,8 +38,8 @@ gitboard shows your GitHub account in one terminal window: your repos, your open
 | Everywhere | `Tab` / `←` `→` (or `1`-`5`) | Switch view |
 | | `j` `k` | Move |
 | | `/` | Filter rows (`Enter` keeps it, `Esc` clears it) |
-| | `f` | Show only the selected row's repo, in every view (`f` again clears it) |
-| | `s` | Group rows by repo, most active repo first, each group under its own title |
+| | `f` | Show only the selected row's repo, in every view (`f` again clears it). From Repos it focuses the other views on that repo |
+| | `s` | Group rows by repo, most active repo first, each group under its own title (not in Repos, where every row is a repo) |
 | | `o` | Open in your default browser (`$BROWSER` if it exists) |
 | | `p` | Toggle the sidebar (open by default from 120 columns) |
 | | `Ctrl+D` `Ctrl+U` | Scroll the sidebar |
