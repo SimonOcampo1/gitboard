@@ -49,6 +49,7 @@ type Model struct {
 	filtering bool
 	repo      string // when set, every view shows this repo only
 	byRepo    bool   // group rows by repo
+	showHelp  bool   // ? expands the help line into every key
 
 	sidebarToggled bool // p was pressed: stop following the width
 	sidebarWanted  bool
@@ -115,10 +116,24 @@ func (m *Model) load(v int) tea.Cmd {
 func (m *Model) selected() (item, bool) {
 	rows := m.shown[m.active]
 	i := m.tables[m.active].Cursor()
-	if i < 0 || i >= len(rows) {
+	if i < 0 || i >= len(rows) || rows[i].group {
 		return item{}, false
 	}
 	return rows[i], true
+}
+
+// skipGroupRows moves the cursor of view v off a group row, going dir
+// (+1 down, -1 up) first and the other way when that runs out.
+func (m *Model) skipGroupRows(v, dir int) {
+	rows, t := m.shown[v], &m.tables[v]
+	for _, d := range []int{dir, -dir} {
+		for c := t.Cursor(); c >= 0 && c < len(rows); c += d {
+			if !rows[c].group {
+				t.SetCursor(c)
+				return
+			}
+		}
+	}
 }
 
 func (m *Model) setRows(v int) {
@@ -127,11 +142,18 @@ func (m *Model) setRows(v int) {
 		q = m.filter.Value()
 	}
 	m.shown[v] = arrange(m.all[v], q, m.repo, m.byRepo)
+	cols := m.tables[v].Columns()
 	rows := make([]table.Row, len(m.shown[v]))
 	for i, it := range m.shown[v] {
+		if it.group {
+			rows[i] = groupRow(it, cols, m.client.Login)
+			continue
+		}
 		row := make(table.Row, 0, len(m.keep[v]))
-		for _, k := range m.keep[v] {
-			row = append(row, it.cols[k])
+		for j, k := range m.keep[v] {
+			// The table has no cell padding (see tableStyles): each cell
+			// carries its own leading space and leaves one free at the end.
+			row = append(row, " "+ansi.Truncate(it.cols[k], cols[j].Width-2, "…"))
 		}
 		rows[i] = row
 	}
@@ -140,6 +162,30 @@ func (m *Model) setRows(v int) {
 	if c := m.tables[v].Cursor(); c < 0 || c >= len(rows) {
 		m.tables[v].SetCursor(max(0, min(c, len(rows)-1)))
 	}
+	m.skipGroupRows(v, 1)
+}
+
+// groupRow draws a group row. A spacer is empty; a title row is one line
+// across the whole table, the repo and its row count followed by a
+// divider, cut into the cells. That only works because cells have no
+// padding of their own.
+func groupRow(it item, cols []table.Column, login string) table.Row {
+	row := make(table.Row, len(cols))
+	if it.title == "" {
+		return row
+	}
+	total := 0
+	for _, c := range cols {
+		total += c.Width
+	}
+	title := ansi.Truncate(shortRepo(it.title, login)+" · "+fmt.Sprint(it.count), max(1, total-3), "…")
+	line := " " + groupStyle.Render(title) + " " + faint.Render(strings.Repeat("─", max(0, total-lipgloss.Width(title)-3)))
+	start := 0
+	for j, c := range cols {
+		row[j] = ansi.Cut(line, start, start+c.Width)
+		start += c.Width
+	}
+	return row
 }
 
 func (m *Model) setAllRows() {
@@ -176,6 +222,12 @@ func (m *Model) layout() {
 			mustKeep = "Repo"
 		}
 		cols, keep := fitColumnsKeeping(views[i].columns, views[i].drop, tw, mustKeep)
+		// Cells pad themselves (see setRows), so each column gets its 2
+		// cells of padding back as width.
+		for j := range cols {
+			cols[j].Width += 2
+			cols[j].Title = " " + cols[j].Title
+		}
 		// The table reads rows with the old column count while columns
 		// change, so clear them first; setAllRows refills them.
 		m.tables[i].SetRows(nil)
@@ -363,6 +415,7 @@ func (m *Model) updateFilter(k tea.KeyPressMsg) tea.Cmd {
 	}
 	m.setRows(m.active)
 	m.tables[m.active].SetCursor(0)
+	m.skipGroupRows(m.active, 1)
 	return m.refreshSidebar()
 }
 
@@ -397,6 +450,11 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 		m.setAllRows()
 		m.tables[m.active].SetCursor(0)
+		m.skipGroupRows(m.active, 1)
+		return m.refreshSidebar()
+	case "?":
+		m.showHelp = !m.showHelp
+		m.layout()
 		return m.refreshSidebar()
 	case "s":
 		m.byRepo = !m.byRepo
@@ -429,7 +487,12 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 	before := m.tables[m.active].Cursor()
 	var cmd tea.Cmd
 	m.tables[m.active], cmd = m.tables[m.active].Update(k)
-	if m.tables[m.active].Cursor() != before {
+	if after := m.tables[m.active].Cursor(); after != before {
+		dir := 1
+		if after < before {
+			dir = -1
+		}
+		m.skipGroupRows(m.active, dir)
 		return tea.Batch(cmd, m.refreshSidebar())
 	}
 	return cmd
@@ -516,7 +579,7 @@ func (m Model) header() string {
 			}
 			label := v.name
 			if counts && !m.loading[i] && m.errs[i] == nil {
-				label += " " + fmt.Sprint(len(m.shown[i]))
+				label += " " + fmt.Sprint(rowCount(m.shown[i]))
 			}
 			if i == m.active {
 				out = append(out, tabActive.Render(label))
@@ -561,24 +624,32 @@ func (m Model) body() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, t, panel.Render(m.vp.View()))
 }
 
-// helpLines wraps the key hints to the terminal width instead of letting
-// the last ones fall off the edge.
+// helpLines lists the keys of the active view first, then the general
+// ones, wrapped to the terminal width. ? swaps the short list for all of them.
 func (m *Model) helpLines() []string {
-	hints := []string{"tab views", "j/k move", "/ filter", "f this repo", "s group by repo",
-		"o open", "p sidebar", "r refresh", "q quit"}
-	hints = append(hints, strings.Split(views[m.active].help, " · ")...)
+	hints := append([]hint{}, views[m.active].help...)
+	if m.showHelp {
+		hints = append(hints, hint{"tab ←→", "view"}, hint{"j k", "move"}, hint{"/", "filter"},
+			hint{"f", "only this repo"}, hint{"s", "group by repo"}, hint{"esc", "clear filters"},
+			hint{"o", "open"}, hint{"p", "sidebar"}, hint{"^d ^u", "scroll sidebar"},
+			hint{"r", "reload"}, hint{"?", "less"}, hint{"q", "quit"})
+	} else {
+		hints = append(hints, hint{"/", "filter"}, hint{"f", "repo"}, hint{"s", "group"},
+			hint{"o", "open"}, hint{"?", "more"}, hint{"q", "quit"})
+	}
 	width := max(20, m.width)
 	var lines []string
 	line := ""
 	for _, h := range hints {
+		cell := keyStyle.Render(h.key) + " " + faint.Render(h.label)
 		switch {
 		case line == "":
-			line = h
-		case lipgloss.Width(line)+3+lipgloss.Width(h) <= width:
-			line += " · " + h
+			line = cell
+		case lipgloss.Width(line)+2+lipgloss.Width(cell) <= width:
+			line += "  " + cell
 		default:
 			lines = append(lines, line)
-			line = h
+			line = cell
 		}
 	}
 	return append(lines, line)
@@ -603,7 +674,7 @@ func (m Model) footer() string {
 		parts = append(parts, s)
 	}
 	status := ansi.Truncate(strings.Join(parts, "  "), m.width, "…")
-	return status + "\n" + faint.Render(strings.Join(m.helpLines(), "\n"))
+	return status + "\n" + strings.Join(m.helpLines(), "\n")
 }
 
 func (m Model) View() tea.View {

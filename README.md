@@ -39,11 +39,12 @@ gitboard shows your GitHub account in one terminal window: your repos, your open
 | | `j` `k` | Move |
 | | `/` | Filter rows (`Enter` keeps it, `Esc` clears it) |
 | | `f` | Show only the selected row's repo, in every view (`f` again clears it) |
-| | `s` | Group rows by repo |
+| | `s` | Group rows by repo, most active repo first, each group under its own title |
 | | `o` | Open in your default browser (`$BROWSER` if it exists) |
 | | `p` | Toggle the sidebar (open by default from 120 columns) |
 | | `Ctrl+D` `Ctrl+U` | Scroll the sidebar |
 | | `r` | Reload the current view |
+| | `?` | Show every key in the help line |
 | | `q` | Quit |
 | Repos | `c` | Clone |
 | | `g` | `lazygit` in the local clone |

@@ -20,6 +20,12 @@ type item struct {
 	sha    string
 	md     string                           // Sidebar markdown known up front
 	fetch  func(*gh.Client) (string, error) // extra Sidebar markdown loaded on demand
+
+	// Group rows: a blank spacer or a repo title between groups. They are
+	// never selected; title is the repo, count its rows.
+	group bool
+	title string
+	count int
 }
 
 // ago renders a timestamp the way gh-dash does: 5m, 3h, 2d, 4w, 1y.
@@ -130,7 +136,7 @@ func issueItems(is []gh.Issue, login string) []item {
 }
 
 // arrange is what a view shows: the rows of repo only (when set), whose
-// text contains q, grouped by repo when byRepo is on.
+// text contains q, grouped by repo under group rows when byRepo is on.
 func arrange(items []item, q, repo string, byRepo bool) []item {
 	var out []item
 	for _, it := range filterItems(items, q) {
@@ -138,10 +144,42 @@ func arrange(items []item, q, repo string, byRepo bool) []item {
 			out = append(out, it)
 		}
 	}
-	if byRepo {
-		sort.SliceStable(out, func(i, j int) bool { return out[i].repo < out[j].repo })
+	if !byRepo {
+		return out
 	}
-	return out
+	// Groups keep the order of their newest row, so the most active repo
+	// comes first; rows keep their own order inside each group.
+	first := map[string]int{}
+	counts := map[string]int{}
+	for i, it := range out {
+		if _, ok := first[it.repo]; !ok {
+			first[it.repo] = i
+		}
+		counts[it.repo]++
+	}
+	sort.SliceStable(out, func(i, j int) bool { return first[out[i].repo] < first[out[j].repo] })
+	var grouped []item
+	for i, it := range out {
+		if i == 0 || out[i-1].repo != it.repo {
+			if i > 0 {
+				grouped = append(grouped, item{group: true})
+			}
+			grouped = append(grouped, item{group: true, title: it.repo, count: counts[it.repo]})
+		}
+		grouped = append(grouped, it)
+	}
+	return grouped
+}
+
+// rowCount is how many real rows items holds, group rows aside.
+func rowCount(items []item) int {
+	n := 0
+	for _, it := range items {
+		if !it.group {
+			n++
+		}
+	}
+	return n
 }
 
 // filterItems keeps the rows whose visible text contains q, ignoring case.

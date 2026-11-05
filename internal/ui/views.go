@@ -12,9 +12,12 @@ type view struct {
 	name    string
 	columns []table.Column
 	drop    []int
-	help    string
+	help    []hint
 	load    func(*gh.Client) ([]item, error)
 }
+
+// hint is one key of the help line.
+type hint struct{ key, label string }
 
 const (
 	vRepos = iota
@@ -26,19 +29,19 @@ const (
 
 var views = [5]view{
 	vRepos: {"Repos", []table.Column{{Title: "Name"}, {Title: "Lang", Width: 12}, {Title: "Stars", Width: 6}, {Title: "Vis", Width: 5}, {Title: "Push", Width: 5}},
-		[]int{2, 1, 3}, "c clone · g lazygit · n new PR",
+		[]int{2, 1, 3}, []hint{{"c", "clone"}, {"g", "lazygit"}, {"n", "new PR"}},
 		func(c *gh.Client) ([]item, error) { r, err := c.Repos(); return repoItems(r), err }},
 	vPRs: {"PRs", []table.Column{{Title: "Title"}, {Title: "Repo", Width: 22}, {Title: "State", Width: 9}, {Title: "Checks", Width: 8}, {Title: "Upd", Width: 4}},
-		[]int{3, 1, 2}, "d diff · m merge",
+		[]int{3, 1, 2}, []hint{{"d", "diff"}, {"m", "merge"}},
 		func(c *gh.Client) ([]item, error) { p, err := c.PRs(gh.KindPRs); return prItems(p, c.Login), err }},
 	vCommits: {"Commits", []table.Column{{Title: "Message"}, {Title: "Repo", Width: 22}, {Title: "SHA", Width: 8}, {Title: "Age", Width: 4}},
-		[]int{2, 1}, "y copy SHA",
+		[]int{2, 1}, []hint{{"y", "copy SHA"}},
 		func(c *gh.Client) ([]item, error) { cm, err := c.Commits(); return commitItems(cm, c.Login), err }},
 	vReviews: {"Reviews", []table.Column{{Title: "Title"}, {Title: "Repo", Width: 22}, {Title: "State", Width: 9}, {Title: "Checks", Width: 8}, {Title: "Upd", Width: 4}},
-		[]int{3, 1, 2}, "d diff · a approve",
+		[]int{3, 1, 2}, []hint{{"d", "diff"}, {"a", "approve"}},
 		func(c *gh.Client) ([]item, error) { p, err := c.PRs(gh.KindReviews); return prItems(p, c.Login), err }},
 	vIssues: {"Issues", []table.Column{{Title: "Title"}, {Title: "Repo", Width: 22}, {Title: "Labels", Width: 16}, {Title: "Upd", Width: 4}},
-		[]int{2, 1}, "x close",
+		[]int{2, 1}, []hint{{"x", "close"}},
 		func(c *gh.Client) ([]item, error) { i, err := c.Issues(); return issueItems(i, c.Login), err }},
 }
 

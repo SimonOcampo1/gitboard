@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -49,10 +50,30 @@ func TestArrangeFiltersAndGroupsByRepo(t *testing.T) {
 	if got := arrange(items, "", "o/b", false); len(got) != 2 || got[0].cols[0] != "fix login" {
 		t.Fatalf("repo filter = %v", got)
 	}
-	// Grouping keeps the original (newest-first) order inside each repo.
+	// Grouped: o/b first (it has the newest row), rows keep their order
+	// inside the group, a title row opens each group and a blank row
+	// separates them.
 	got := arrange(items, "", "", true)
-	if got[0].repo != "o/a" || got[1].cols[0] != "fix login" || got[2].cols[0] != "add docs" {
-		t.Fatalf("grouped = %v", got)
+	want := []string{"title o/b 2", "fix login", "add docs", "spacer", "title o/a 1", "add tests"}
+	if len(got) != len(want) {
+		t.Fatalf("grouped = %d rows, want %d: %v", len(got), len(want), got)
+	}
+	for i, it := range got {
+		var desc string
+		switch {
+		case it.group && it.title == "":
+			desc = "spacer"
+		case it.group:
+			desc = fmt.Sprintf("title %s %d", it.title, it.count)
+		default:
+			desc = it.cols[0]
+		}
+		if desc != want[i] {
+			t.Errorf("row %d = %q, want %q", i, desc, want[i])
+		}
+	}
+	if n := rowCount(got); n != 3 {
+		t.Errorf("rowCount = %d, want 3", n)
 	}
 	if got := arrange(items, "add", "o/b", false); len(got) != 1 || got[0].cols[0] != "add docs" {
 		t.Fatalf("text + repo filter = %v", got)
