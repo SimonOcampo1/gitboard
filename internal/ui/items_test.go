@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,18 +43,19 @@ func TestFitColumnsHidesInDropOrder(t *testing.T) {
 }
 
 func TestArrangeFiltersAndGroupsByRepo(t *testing.T) {
+	now := time.Now()
 	items := []item{
-		{repo: "o/b", cols: []string{"fix login"}},
-		{repo: "o/a", cols: []string{"add tests"}},
-		{repo: "o/b", cols: []string{"add docs"}},
+		{repo: "o/b", cols: []string{"fix login"}, at: now},
+		{repo: "o/a", cols: []string{"add tests"}, at: now.Add(-time.Hour)},
+		{repo: "o/b", cols: []string{"add docs"}, at: now.Add(-2 * time.Hour)},
 	}
-	if got := arrange(items, "", "o/b", false); len(got) != 2 || got[0].cols[0] != "fix login" {
+	if got := arrange(items, "", "o/b", false, newestFirst); len(got) != 2 || got[0].cols[0] != "fix login" {
 		t.Fatalf("repo filter = %v", got)
 	}
 	// Grouped: o/b first (it has the newest row), rows keep their order
 	// inside the group, a title row opens each group and a blank row
 	// separates them.
-	got := arrange(items, "", "", true)
+	got := arrange(items, "", "", true, newestFirst)
 	want := []string{"title o/b 2", "fix login", "add docs", "spacer", "title o/a 1", "add tests"}
 	if len(got) != len(want) {
 		t.Fatalf("grouped = %d rows, want %d: %v", len(got), len(want), got)
@@ -75,7 +77,7 @@ func TestArrangeFiltersAndGroupsByRepo(t *testing.T) {
 	if n := rowCount(got); n != 3 {
 		t.Errorf("rowCount = %d, want 3", n)
 	}
-	if got := arrange(items, "add", "o/b", false); len(got) != 1 || got[0].cols[0] != "add docs" {
+	if got := arrange(items, "add", "o/b", false, newestFirst); len(got) != 1 || got[0].cols[0] != "add docs" {
 		t.Fatalf("text + repo filter = %v", got)
 	}
 }
@@ -109,5 +111,39 @@ func TestFitColumnsKeepingNeverHidesKept(t *testing.T) {
 	_, keep := fitColumnsKeeping(all, []int{2, 1}, 40, "Repo")
 	if len(keep) != 2 || keep[1] != 1 {
 		t.Fatalf("keep = %v, want Message and Repo", keep)
+	}
+}
+
+func TestArrangeOrders(t *testing.T) {
+	now := time.Now()
+	items := []item{
+		{repo: "o/b", cols: []string{"beta"}, at: now.Add(-time.Hour)},
+		{repo: "o/a", cols: []string{"Alpha"}, at: now.Add(-2 * time.Hour)},
+		{repo: "o/c", cols: []string{"gamma"}, at: now},
+	}
+	cases := map[order]string{
+		newestFirst: "gamma beta Alpha",
+		oldestFirst: "Alpha beta gamma",
+		aToZ:        "Alpha beta gamma", // case does not matter
+		zToA:        "gamma beta Alpha",
+	}
+	for ord, want := range cases {
+		var got []string
+		for _, it := range arrange(items, "", "", false, ord) {
+			got = append(got, it.cols[0])
+		}
+		if g := strings.Join(got, " "); g != want {
+			t.Errorf("%v: got %q, want %q", ord, g, want)
+		}
+	}
+	// Alphabetical orders put the groups in repo-name order.
+	var titles []string
+	for _, it := range arrange(items, "", "", true, zToA) {
+		if it.title != "" {
+			titles = append(titles, it.title)
+		}
+	}
+	if g := strings.Join(titles, " "); g != "o/c o/b o/a" {
+		t.Errorf("Z→A groups = %q", g)
 	}
 }

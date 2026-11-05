@@ -50,6 +50,7 @@ type Model struct {
 	repo      string // when set, every view shows this repo only
 	byRepo    bool   // group rows by repo
 	showHelp  bool   // ? expands the help line into every key
+	order     order  // S cycles it
 
 	sidebarToggled bool // p was pressed: stop following the width
 	sidebarWanted  bool
@@ -141,7 +142,7 @@ func (m *Model) setRows(v int) {
 	if v == m.active {
 		q = m.filter.Value()
 	}
-	m.shown[v] = arrange(m.all[v], q, m.repo, m.grouped(v))
+	m.shown[v] = arrange(m.all[v], q, m.repo, m.grouped(v), m.order)
 	cols := m.tables[v].Columns()
 	rows := make([]table.Row, len(m.shown[v]))
 	for i, it := range m.shown[v] {
@@ -462,6 +463,12 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		m.showHelp = !m.showHelp
 		m.layout()
 		return m.refreshSidebar()
+	case "S":
+		m.order = (m.order + 1) % orderCount
+		m.setAllRows()
+		m.tables[m.active].SetCursor(0)
+		m.skipGroupRows(m.active, 1)
+		return m.refreshSidebar()
 	case "s":
 		if m.active == vRepos {
 			return nil
@@ -643,19 +650,23 @@ func (m *Model) helpLines() []string {
 	if m.showHelp {
 		repoKeys = []hint{{"f", "only this repo"}, {"s", "group by repo"}}
 	}
+	repoKeys = append(repoKeys, hint{"S", "sort"})
 	if m.active == vRepos {
-		repoKeys = []hint{{"f", "focus"}}
+		repoKeys = []hint{{"f", "focus"}, {"S", "sort"}}
 		if m.showHelp {
-			repoKeys = []hint{{"f", "focus the other views on this repo"}}
+			repoKeys = []hint{{"f", "focus the other views on this repo"}, {"S", "sort"}}
 		}
 	}
 	if m.showHelp {
-		hints = append(hints, hint{"tab ←→", "view"}, hint{"j k", "move"}, hint{"/", "filter"})
+		repoKeys[len(repoKeys)-1].label = "sort: newest, oldest, A→Z, Z→A"
+	}
+	if m.showHelp {
+		hints = append(hints, hint{"tab ←→", "view"}, hint{"j k", "move"}, hint{"/", "search"})
 		hints = append(hints, repoKeys...)
-		hints = append(hints, hint{"esc", "clear filters"}, hint{"o", "open"}, hint{"p", "sidebar"},
+		hints = append(hints, hint{"esc", "clear search and repo"}, hint{"o", "open"}, hint{"p", "sidebar"},
 			hint{"^d ^u", "scroll sidebar"}, hint{"r", "reload"}, hint{"?", "less"}, hint{"q", "quit"})
 	} else {
-		hints = append(hints, hint{"/", "filter"})
+		hints = append(hints, hint{"/", "search"})
 		hints = append(hints, repoKeys...)
 		hints = append(hints, hint{"o", "open"}, hint{"?", "more"}, hint{"q", "quit"})
 	}
@@ -684,6 +695,9 @@ func (m Model) footer() string {
 	}
 	if m.repo != "" {
 		parts = append(parts, brand.Render("repo: "+m.repo)+faint.Render(" (f to clear)"))
+	}
+	if m.order != newestFirst {
+		parts = append(parts, faint.Render("sorted "+m.order.String()))
 	}
 	if m.grouped(m.active) {
 		parts = append(parts, faint.Render("grouped by repo"))

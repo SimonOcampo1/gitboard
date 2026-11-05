@@ -21,6 +21,8 @@ type item struct {
 	md     string                           // Sidebar markdown known up front
 	fetch  func(*gh.Client) (string, error) // extra Sidebar markdown loaded on demand
 
+	at time.Time // what the newest/oldest orders sort by
+
 	// Group rows: a blank spacer or a repo title between groups. They are
 	// never selected; title is the repo, count its rows.
 	group bool
@@ -59,8 +61,8 @@ func repoItems(rs []gh.Repo) []item {
 		}
 		repo := r.NameWithOwner
 		out = append(out, item{
-			cols: []string{r.Name, r.Language, fmt.Sprintf("★%d", r.Stars), vis, ago(r.PushedAt)},
-			url:  r.URL, repo: repo, name: r.Name,
+			cols: []string{r.Name, r.Language, fmt.Sprintf("★%d", r.Stars), vis, ago(r.PushedAt)}, at: r.PushedAt,
+			url: r.URL, repo: repo, name: r.Name,
 			fetch: func(c *gh.Client) (string, error) {
 				md, err := c.Readme(repo)
 				if err == nil && md == "" {
@@ -94,8 +96,8 @@ func prItems(ps []gh.PR, login string) []item {
 		}
 		md := fmt.Sprintf("# %s\n\n`%s#%d` · %s · checks: %s\n\n%s", p.Title, p.Repo, p.Number, prState(p), strings.ToLower(checks), p.Body)
 		out = append(out, item{
-			cols: []string{p.Title, fmt.Sprintf("%s#%d", shortRepo(p.Repo, login), p.Number), prState(p), strings.ToLower(checks), ago(p.UpdatedAt)},
-			url:  p.URL, repo: p.Repo, number: p.Number, md: md,
+			cols: []string{p.Title, fmt.Sprintf("%s#%d", shortRepo(p.Repo, login), p.Number), prState(p), strings.ToLower(checks), ago(p.UpdatedAt)}, at: p.UpdatedAt,
+			url: p.URL, repo: p.Repo, number: p.Number, md: md,
 		})
 	}
 	return out
@@ -107,8 +109,8 @@ func commitItems(cs []gh.Commit, login string) []item {
 		subject, _, _ := strings.Cut(c.Message, "\n")
 		repo, sha := c.Repo, c.SHA
 		out = append(out, item{
-			cols: []string{subject, shortRepo(c.Repo, login), c.SHA[:7], ago(c.Date)},
-			url:  c.URL, repo: repo, sha: sha,
+			cols: []string{subject, shortRepo(c.Repo, login), c.SHA[:7], ago(c.Date)}, at: c.Date,
+			url: c.URL, repo: repo, sha: sha,
 			md: fmt.Sprintf("`%s` · `%s`\n\n```\n%s\n```", repo, sha[:7], c.Message),
 			fetch: func(cl *gh.Client) (string, error) {
 				files, err := cl.CommitFiles(repo, sha)
@@ -128,27 +130,55 @@ func issueItems(is []gh.Issue, login string) []item {
 			md += " · " + labels
 		}
 		out = append(out, item{
-			cols: []string{i.Title, fmt.Sprintf("%s#%d", shortRepo(i.Repo, login), i.Number), labels, ago(i.UpdatedAt)},
-			url:  i.URL, repo: i.Repo, number: i.Number, md: md + "\n\n" + i.Body,
+			cols: []string{i.Title, fmt.Sprintf("%s#%d", shortRepo(i.Repo, login), i.Number), labels, ago(i.UpdatedAt)}, at: i.UpdatedAt,
+			url: i.URL, repo: i.Repo, number: i.Number, md: md + "\n\n" + i.Body,
 		})
 	}
 	return out
 }
 
+// order is how a view sorts its rows; S cycles through them.
+type order int
+
+const (
+	newestFirst order = iota
+	oldestFirst
+	aToZ
+	zToA
+	orderCount
+)
+
+func (o order) String() string {
+	return [...]string{"newest first", "oldest first", "A→Z", "Z→A"}[o]
+}
+
 // arrange is what a view shows: the rows of repo only (when set), whose
-// text contains q, grouped by repo under group rows when byRepo is on.
-func arrange(items []item, q, repo string, byRepo bool) []item {
+// text contains q, sorted by ord, and grouped by repo under group rows
+// when byRepo is on.
+func arrange(items []item, q, repo string, byRepo bool, ord order) []item {
 	var out []item
 	for _, it := range filterItems(items, q) {
 		if repo == "" || it.repo == repo {
 			out = append(out, it)
 		}
 	}
+	text := func(it item) string { return strings.ToLower(it.cols[0]) }
+	sort.SliceStable(out, func(i, j int) bool {
+		switch ord {
+		case oldestFirst:
+			return out[i].at.Before(out[j].at)
+		case aToZ:
+			return text(out[i]) < text(out[j])
+		case zToA:
+			return text(out[i]) > text(out[j])
+		}
+		return out[i].at.After(out[j].at)
+	})
 	if !byRepo {
 		return out
 	}
-	// Groups keep the order of their newest row, so the most active repo
-	// comes first; rows keep their own order inside each group.
+	// By date, a group sits where its first row does (newest first: the
+	// most active repo on top). Alphabetically, groups follow the repo name.
 	first := map[string]int{}
 	counts := map[string]int{}
 	for i, it := range out {
@@ -157,7 +187,16 @@ func arrange(items []item, q, repo string, byRepo bool) []item {
 		}
 		counts[it.repo]++
 	}
-	sort.SliceStable(out, func(i, j int) bool { return first[out[i].repo] < first[out[j].repo] })
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].repo, out[j].repo
+		switch ord {
+		case aToZ:
+			return strings.ToLower(a) < strings.ToLower(b)
+		case zToA:
+			return strings.ToLower(a) > strings.ToLower(b)
+		}
+		return first[a] < first[b]
+	})
 	var grouped []item
 	for i, it := range out {
 		if i == 0 || out[i-1].repo != it.repo {
