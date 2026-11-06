@@ -21,7 +21,8 @@ type item struct {
 	md     string                           // Sidebar markdown known up front
 	fetch  func(*gh.Client) (string, error) // extra Sidebar markdown loaded on demand
 
-	at time.Time // what the newest/oldest orders sort by
+	at      time.Time // what the newest/oldest orders sort by
+	section string    // Repos view: "Personal" or "Collaborated"
 
 	// Group rows: a blank spacer or a repo title between groups. They are
 	// never selected; title is the repo, count its rows.
@@ -52,7 +53,7 @@ func shortRepo(repo, login string) string {
 	return strings.TrimPrefix(repo, login+"/")
 }
 
-func repoItems(rs []gh.Repo) []item {
+func repoItems(rs []gh.Repo, login string) []item {
 	var out []item
 	for _, r := range rs {
 		vis := "pub"
@@ -60,9 +61,13 @@ func repoItems(rs []gh.Repo) []item {
 			vis = "priv"
 		}
 		repo := r.NameWithOwner
+		section := "Collaborated"
+		if r.Owned {
+			section = "Personal"
+		}
 		out = append(out, item{
-			cols: []string{r.Name, r.Language, fmt.Sprintf("★%d", r.Stars), vis, ago(r.PushedAt)}, at: r.PushedAt,
-			url: r.URL, repo: repo, name: r.Name,
+			cols: []string{shortRepo(repo, login), r.Language, fmt.Sprintf("★%d", r.Stars), vis, ago(r.PushedAt)}, at: r.PushedAt,
+			url: r.URL, repo: repo, name: r.Name, section: section,
 			fetch: func(c *gh.Client) (string, error) {
 				md, err := c.Readme(repo)
 				if err == nil && md == "" {
@@ -152,10 +157,13 @@ func (o order) String() string {
 	return [...]string{"newest first", "oldest first", "A→Z", "Z→A"}[o]
 }
 
+func byRepo(it item) string    { return it.repo }
+func bySection(it item) string { return it.section }
+
 // arrange is what a view shows: the rows of repo only (when set), whose
-// text contains q, sorted by ord, and grouped by repo under group rows
-// when byRepo is on.
-func arrange(items []item, q, repo string, byRepo bool, ord order) []item {
+// text contains q, sorted by ord, and grouped under group rows by the key
+// groupBy gives each row (no groups when nil).
+func arrange(items []item, q, repo string, groupBy func(item) string, ord order) []item {
 	var out []item
 	for _, it := range filterItems(items, q) {
 		if repo == "" || it.repo == repo {
@@ -174,21 +182,25 @@ func arrange(items []item, q, repo string, byRepo bool, ord order) []item {
 		}
 		return out[i].at.After(out[j].at)
 	})
-	if !byRepo {
+	if groupBy == nil {
 		return out
 	}
 	// By date, a group sits where its first row does (newest first: the
-	// most active repo on top). Alphabetically, groups follow the repo name.
+	// most active group on top). Alphabetically, groups follow their key.
 	first := map[string]int{}
 	counts := map[string]int{}
 	for i, it := range out {
-		if _, ok := first[it.repo]; !ok {
-			first[it.repo] = i
+		if _, ok := first[groupBy(it)]; !ok {
+			first[groupBy(it)] = i
 		}
-		counts[it.repo]++
+		counts[groupBy(it)]++
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		a, b := out[i].repo, out[j].repo
+		a, b := groupBy(out[i]), groupBy(out[j])
+		// Personal (Repos view) leads in every order: your own repos come first.
+		if (a == "Personal") != (b == "Personal") {
+			return a == "Personal"
+		}
 		switch ord {
 		case aToZ:
 			return strings.ToLower(a) < strings.ToLower(b)
@@ -199,11 +211,11 @@ func arrange(items []item, q, repo string, byRepo bool, ord order) []item {
 	})
 	var grouped []item
 	for i, it := range out {
-		if i == 0 || out[i-1].repo != it.repo {
+		if k := groupBy(it); i == 0 || groupBy(out[i-1]) != k {
 			if i > 0 {
 				grouped = append(grouped, item{group: true})
 			}
-			grouped = append(grouped, item{group: true, title: it.repo, count: counts[it.repo]})
+			grouped = append(grouped, item{group: true, title: k, count: counts[k]})
 		}
 		grouped = append(grouped, it)
 	}

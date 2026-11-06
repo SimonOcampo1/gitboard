@@ -9,7 +9,10 @@ One of the five tabs of the board, switched with keys `1`-`5`.
 _Avoid_: section, page, screen
 
 **Repos** (view 1):
-The repositories owned by the signed-in account.
+The repositories owned by the signed-in account (**Personal**), plus the ones it **Collaborated** on: as a collaborator or org member, or by committing, opening PRs or issues, or reviewing there. Grouped under those two titles by default, Personal always first.
+
+**Grouping**:
+Rows of a view shown under titled groups: by repo in views 2-5, by Personal/Collaborated in Repos. On by default, toggled with `b`.
 
 **PRs** (view 2):
 Open pull requests authored by the signed-in account, across all repos.
@@ -43,7 +46,7 @@ _Avoid_: preview pane, detail view
 
 ## Relationships
 
-- Views 1-3 show **your own work**; views 4-5 show **what others ask of you**
+- Views 1-3 show **your own work** (Repos also lists repos you only contributed to); views 4-5 show **what others ask of you**
 - A **PR** shows up in **Reviews** only when someone else authored it
 - A clone never overwrites: if `<destination>/<repo name>` already exists, the clone is refused
 

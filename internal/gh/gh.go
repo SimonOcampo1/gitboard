@@ -24,6 +24,7 @@ type Repo struct {
 	Private       bool
 	Stars         int
 	PushedAt      time.Time
+	Owned         bool // false: a repo the account collaborated on
 }
 
 type PR struct {
@@ -101,33 +102,46 @@ func SearchQuery(k Kind, login string) string {
 	}
 }
 
+// Repos returns the repos the account owns, then the ones it collaborated
+// on: a collaborator or org member, or someone who committed, opened PRs
+// or issues, or reviewed there. Owned ones have Owned set.
 func (c *Client) Repos() ([]Repo, error) {
-	q := fmt.Sprintf(`query { viewer { repositories(first: %d, ownerAffiliations: OWNER, orderBy: {field: PUSHED_AT, direction: DESC}) {
-		nodes { nameWithOwner name description url isPrivate stargazerCount pushedAt primaryLanguage { name } } } } }`, Limit)
-	var resp struct {
-		Viewer struct {
-			Repositories struct {
-				Nodes []struct {
-					NameWithOwner, Name, Description, URL string
-					IsPrivate                             bool
-					StargazerCount                        int
-					PushedAt                              time.Time
-					PrimaryLanguage                       *struct{ Name string }
-				}
-			}
+	fields := "nodes { nameWithOwner name description url isPrivate stargazerCount pushedAt primaryLanguage { name } }"
+	order := "orderBy: {field: PUSHED_AT, direction: DESC}"
+	q := fmt.Sprintf(`query { viewer {
+		owned: repositories(first: %[1]d, ownerAffiliations: OWNER, %[2]s) { %[3]s }
+		member: repositories(first: %[1]d, ownerAffiliations: [COLLABORATOR, ORGANIZATION_MEMBER], %[2]s) { %[3]s }
+		contributed: repositoriesContributedTo(first: %[1]d, includeUserRepositories: false, %[2]s) { %[3]s } } }`, Limit, order, fields)
+	type conn struct {
+		Nodes []struct {
+			NameWithOwner, Name, Description, URL string
+			IsPrivate                             bool
+			StargazerCount                        int
+			PushedAt                              time.Time
+			PrimaryLanguage                       *struct{ Name string }
 		}
+	}
+	var resp struct {
+		Viewer struct{ Owned, Member, Contributed conn }
 	}
 	if err := c.gql.Do(q, nil, &resp); err != nil {
 		return nil, err
 	}
 	var out []Repo
-	for _, n := range resp.Viewer.Repositories.Nodes {
-		r := Repo{NameWithOwner: n.NameWithOwner, Name: n.Name, Description: n.Description, URL: n.URL,
-			Private: n.IsPrivate, Stars: n.StargazerCount, PushedAt: n.PushedAt}
-		if n.PrimaryLanguage != nil {
-			r.Language = n.PrimaryLanguage.Name
+	seen := map[string]bool{}
+	for i, cn := range []conn{resp.Viewer.Owned, resp.Viewer.Member, resp.Viewer.Contributed} {
+		for _, n := range cn.Nodes {
+			if seen[n.NameWithOwner] {
+				continue
+			}
+			seen[n.NameWithOwner] = true
+			r := Repo{NameWithOwner: n.NameWithOwner, Name: n.Name, Description: n.Description, URL: n.URL,
+				Private: n.IsPrivate, Stars: n.StargazerCount, PushedAt: n.PushedAt, Owned: i == 0}
+			if n.PrimaryLanguage != nil {
+				r.Language = n.PrimaryLanguage.Name
+			}
+			out = append(out, r)
 		}
-		out = append(out, r)
 	}
 	return out, nil
 }

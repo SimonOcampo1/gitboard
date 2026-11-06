@@ -48,7 +48,7 @@ type Model struct {
 	filter    textinput.Model
 	filtering bool
 	repo      string // when set, every view shows this repo only
-	byRepo    bool   // group rows by repo
+	grouping  bool   // group rows: by repo, or Personal/Collaborated in Repos
 	showHelp  bool   // ? expands the help line into every key
 	order     order  // s cycles it
 
@@ -85,7 +85,7 @@ type doneMsg struct {
 type statusMsg string
 
 func New(c *gh.Client, cfg config.Config, cfgPath string) Model {
-	m := Model{client: c, cfg: cfg, cfgPath: cfgPath,
+	m := Model{client: c, cfg: cfg, cfgPath: cfgPath, grouping: true,
 		extra: map[string]string{}, requested: map[string]bool{}, rendered: map[string]string{}}
 	for i := range m.tables {
 		m.tables[i] = table.New(table.WithFocused(true), table.WithStyles(tableStyles()))
@@ -142,7 +142,7 @@ func (m *Model) setRows(v int) {
 	if v == m.active {
 		q = m.filter.Value()
 	}
-	m.shown[v] = arrange(m.all[v], q, m.repo, m.grouped(v), m.order)
+	m.shown[v] = arrange(m.all[v], q, m.repo, m.groupBy(v), m.order)
 	cols := m.tables[v].Columns()
 	rows := make([]table.Row, len(m.shown[v]))
 	for i, it := range m.shown[v] {
@@ -189,10 +189,17 @@ func groupRow(it item, cols []table.Column, login string) table.Row {
 	return row
 }
 
-// grouped reports whether view v groups its rows by repo. Never in Repos:
-// every row there is already a repo.
-func (m *Model) grouped(v int) bool {
-	return m.byRepo && v != vRepos
+// groupBy is how view v groups its rows, or nil when b turned grouping
+// off. Every row of Repos is already a repo: it groups by Personal and
+// Collaborated instead.
+func (m *Model) groupBy(v int) func(item) string {
+	switch {
+	case !m.grouping:
+		return nil
+	case v == vRepos:
+		return bySection
+	}
+	return byRepo
 }
 
 func (m *Model) setAllRows() {
@@ -225,7 +232,7 @@ func (m *Model) layout() {
 	for i := range m.tables {
 		// Grouped by repo, the Repo column is what makes the groups visible.
 		mustKeep := ""
-		if m.grouped(i) {
+		if m.groupBy(i) != nil && i != vRepos {
 			mustKeep = "Repo"
 		}
 		cols, keep := fitColumnsKeeping(views[i].columns, views[i].drop, tw, mustKeep)
@@ -470,10 +477,7 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		m.skipGroupRows(m.active, 1)
 		return m.refreshSidebar()
 	case "b":
-		if m.active == vRepos {
-			return nil
-		}
-		m.byRepo = !m.byRepo
+		m.grouping = !m.grouping
 		m.layout()
 		return m.refreshSidebar()
 	case "p":
@@ -645,18 +649,18 @@ func (m Model) body() string {
 func (m *Model) helpLines() []string {
 	hints := append([]hint{}, views[m.active].help...)
 	// In Repos, f focuses the other views on the selected repo, and b
-	// (grouping) does not apply: every row is already a repo.
+	// groups into Personal and Collaborated: every row is already a repo.
 	repoKeys := []hint{{"f", "repo"}, {"b", "group"}}
 	if m.showHelp {
 		repoKeys = []hint{{"f", "only this repo"}, {"b", "group by repo"}}
 	}
-	repoKeys = append(repoKeys, hint{"s", "sort"})
 	if m.active == vRepos {
-		repoKeys = []hint{{"f", "focus"}, {"s", "sort"}}
+		repoKeys = []hint{{"f", "focus"}, {"b", "group"}}
 		if m.showHelp {
-			repoKeys = []hint{{"f", "focus the other views on this repo"}, {"s", "sort"}}
+			repoKeys = []hint{{"f", "focus the other views on this repo"}, {"b", "group personal/collaborated"}}
 		}
 	}
+	repoKeys = append(repoKeys, hint{"s", "sort"})
 	if m.showHelp {
 		repoKeys[len(repoKeys)-1].label = "sort: newest, oldest, A→Z, Z→A"
 	}
@@ -699,8 +703,8 @@ func (m Model) footer() string {
 	if m.order != newestFirst {
 		parts = append(parts, faint.Render("sorted "+m.order.String()))
 	}
-	if m.grouped(m.active) {
-		parts = append(parts, faint.Render("grouped by repo"))
+	if !m.grouping {
+		parts = append(parts, faint.Render("ungrouped"))
 	}
 	if m.status != "" {
 		s := m.status

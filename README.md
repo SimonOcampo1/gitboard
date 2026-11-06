@@ -16,7 +16,7 @@
   <a href="#install">Install</a>
 </p>
 
-gitboard shows your GitHub account in one terminal window: your repos, your open PRs, your latest commits, the reviews waiting on you and the issues assigned to you. I use `gh-dash` for PRs and `lazygit` for local work, but I kept opening the browser just to find a repo, check what I pushed yesterday or clone something. This is that missing screen.
+gitboard shows your GitHub account in one terminal window: your repos (and the ones you collaborated on), your open PRs, your latest commits, the reviews waiting on you and the issues assigned to you. I use `gh-dash` for PRs and `lazygit` for local work, but I kept opening the browser just to find a repo, check what I pushed yesterday or clone something. This is that missing screen.
 
 <p align="center">
   <img src="docs/screenshot.png" alt="gitboard showing the Repos view with a README in the sidebar" width="100%">
@@ -40,7 +40,7 @@ gitboard shows your GitHub account in one terminal window: your repos, your open
 | | `/` | Search the rows (`Enter` keeps it, `Esc` clears it) |
 | | `f` | Show only the selected row's repo, in every view (`f` again clears it). From Repos it focuses the other views on that repo |
 | | `s` | Sort: newest first, oldest first, A→Z, Z→A |
-| | `b` | Group rows by repo, most active repo first, each group under its own title (not in Repos, where every row is a repo) |
+| | `b` | Toggle grouping (on by default): rows by repo, most active repo first, each group under its own title. Repos splits into Personal and Collaborated instead |
 | | `o` | Open in your default browser (`$BROWSER` if it exists) |
 | | `p` | Toggle the sidebar (open by default from 120 columns) |
 | | `Ctrl+D` `Ctrl+U` | Scroll the sidebar |
