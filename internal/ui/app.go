@@ -64,6 +64,7 @@ type Model struct {
 	confirm string // url of the issue waiting for a second x
 	status  string
 	spin    spinner.Model
+	update  string // sha of a newer gitboard on GitHub; U installs it
 
 	width, height int
 }
@@ -98,7 +99,7 @@ func New(c *gh.Client, cfg config.Config, cfgPath string) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.spin.Tick}
+	cmds := []tea.Cmd{m.spin.Tick, checkUpdate(m.client)}
 	for i := range views {
 		cmds = append(cmds, m.load(i))
 	}
@@ -375,6 +376,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = string(msg)
 		return m, nil
 
+	case updateMsg:
+		m.update = string(msg)
+		return m, nil
+
+	case updatedMsg:
+		if msg.err != nil {
+			m.update, m.status = msg.sha, "error: update failed: "+msg.err.Error()
+			return m, nil
+		}
+		m.status = "updated to " + msg.sha[:7] + ": quit and reopen gitboard to load it"
+		return m, nil
+
 	case doneMsg:
 		m.status = msg.status
 		if msg.err != nil {
@@ -490,6 +503,13 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 	case "r":
 		m.status = ""
 		return m.load(m.active)
+	case "U":
+		if m.update == "" {
+			return nil
+		}
+		sha := m.update
+		m.update, m.status = "", "updating gitboard…"
+		return install(sha)
 	case "ctrl+d":
 		m.vp.HalfPageDown()
 		return nil
@@ -705,6 +725,9 @@ func (m Model) footer() string {
 	}
 	if !m.grouping {
 		parts = append(parts, faint.Render("ungrouped"))
+	}
+	if m.update != "" {
+		parts = append(parts, brand.Render("update available")+faint.Render(" (U to install)"))
 	}
 	if m.status != "" {
 		s := m.status

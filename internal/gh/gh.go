@@ -325,3 +325,17 @@ func (c *Client) CommitFiles(repo, sha string) ([]string, error) {
 	}
 	return out, nil
 }
+
+// NewerThan returns the tip of the repo's default branch when it comes
+// after rev, and "" when it is rev, behind it, or rev is not on GitHub.
+func (c *Client) NewerThan(repo, rev string) (string, error) {
+	var head struct{ SHA string }
+	if err := c.rest.Get("repos/"+repo+"/commits/HEAD", &head); err != nil {
+		return "", err
+	}
+	var cmp struct{ Status string }
+	if err := c.rest.Get("repos/"+repo+"/compare/"+rev+"..."+head.SHA, &cmp); err != nil || cmp.Status != "ahead" {
+		return "", err
+	}
+	return head.SHA, nil
+}
