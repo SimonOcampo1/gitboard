@@ -9,7 +9,7 @@ One of the five tabs of the board, switched with keys `1`-`5`.
 _Avoid_: section, page, screen
 
 **Repos** (view 1):
-The repositories owned by the signed-in account (**Personal**), plus the ones it **Collaborated** on: as a collaborator or org member, or by committing, opening PRs or issues, or reviewing there. Grouped under those two titles by default, Personal always first.
+The repositories owned by the signed-in account (**Personal**), plus the ones it **Collaborated** on: as a collaborator or org member, or by committing, opening PRs or issues, or reviewing there, in any year since the account was made. Grouped under those two titles by default, Personal always first.
 
 **Grouping**:
 Rows of a view shown under titled groups: by repo in views 2-5, by Personal/Collaborated in Repos. On by default, toggled with `b`.

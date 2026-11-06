@@ -4,6 +4,7 @@ package gh
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -58,9 +59,10 @@ type Commit struct {
 }
 
 type Client struct {
-	gql   *api.GraphQLClient
-	rest  *api.RESTClient
-	Login string
+	gql     *api.GraphQLClient
+	rest    *api.RESTClient
+	Login   string
+	created time.Time // when the account was made: how far back contributions go
 }
 
 func New() (*Client, error) {
@@ -73,12 +75,15 @@ func New() (*Client, error) {
 		return nil, err
 	}
 	var resp struct {
-		Viewer struct{ Login string }
+		Viewer struct {
+			Login     string
+			CreatedAt time.Time
+		}
 	}
-	if err := gql.Do(`query { viewer { login } }`, nil, &resp); err != nil {
+	if err := gql.Do(`query { viewer { login createdAt } }`, nil, &resp); err != nil {
 		return nil, err
 	}
-	return &Client{gql: gql, rest: rest, Login: resp.Viewer.Login}, nil
+	return &Client{gql: gql, rest: rest, Login: resp.Viewer.Login, created: resp.Viewer.CreatedAt}, nil
 }
 
 type Kind int
@@ -104,34 +109,71 @@ func SearchQuery(k Kind, login string) string {
 
 // Repos returns the repos the account owns, then the ones it collaborated
 // on: a collaborator or org member, or someone who committed, opened PRs
-// or issues, or reviewed there. Owned ones have Owned set.
+// or issues, or reviewed there, in any year since the account was made.
+// Owned ones have Owned set.
 func (c *Client) Repos() ([]Repo, error) {
-	fields := "nodes { nameWithOwner name description url isPrivate stargazerCount pushedAt primaryLanguage { name } }"
+	const fields = "nameWithOwner name description url isPrivate stargazerCount pushedAt primaryLanguage { name }"
 	order := "orderBy: {field: PUSHED_AT, direction: DESC}"
 	q := fmt.Sprintf(`query { viewer {
-		owned: repositories(first: %[1]d, ownerAffiliations: OWNER, %[2]s) { %[3]s }
-		member: repositories(first: %[1]d, ownerAffiliations: [COLLABORATOR, ORGANIZATION_MEMBER], %[2]s) { %[3]s }
-		contributed: repositoriesContributedTo(first: %[1]d, includeUserRepositories: false, %[2]s) { %[3]s } } }`, Limit, order, fields)
-	type conn struct {
-		Nodes []struct {
-			NameWithOwner, Name, Description, URL string
-			IsPrivate                             bool
-			StargazerCount                        int
-			PushedAt                              time.Time
-			PrimaryLanguage                       *struct{ Name string }
+		owned: repositories(first: %[1]d, ownerAffiliations: OWNER, %[2]s) { nodes { %[3]s } }
+		member: repositories(first: %[1]d, ownerAffiliations: [COLLABORATOR, ORGANIZATION_MEMBER], %[2]s) { nodes { %[3]s } }
+		contributed: repositoriesContributedTo(first: %[1]d, includeUserRepositories: false, %[2]s) { nodes { %[3]s } }`, Limit, order, fields)
+	// repositoriesContributedTo only covers about the last year; older
+	// contributions take one contributionsCollection per year.
+	years := contributionYears(c.created, time.Now())
+	for i, y := range years {
+		q += fmt.Sprintf("\n\t\ty%d: contributionsCollection(from: %q, to: %q) {", i, y[0].Format(time.RFC3339), y[1].Format(time.RFC3339))
+		for _, kind := range []string{"commit", "issue", "pullRequest", "pullRequestReview"} {
+			q += fmt.Sprintf(" %sContributionsByRepository(maxRepositories: 100) { repository { %s } }", kind, fields)
 		}
+		q += " }"
 	}
-	var resp struct {
-		Viewer struct{ Owned, Member, Contributed conn }
+	q += " } }"
+
+	type node struct {
+		NameWithOwner, Name, Description, URL string
+		IsPrivate                             bool
+		StargazerCount                        int
+		PushedAt                              time.Time
+		PrimaryLanguage                       *struct{ Name string }
 	}
+	type byRepo []struct{ Repository node }
+	var resp struct{ Viewer map[string]json.RawMessage }
 	if err := c.gql.Do(q, nil, &resp); err != nil {
 		return nil, err
 	}
+	// Owned first, so that a repo that is yours never lands as collaborated.
+	var nodes [][]node
+	for _, k := range []string{"owned", "member", "contributed"} {
+		var cn struct{ Nodes []node }
+		if err := json.Unmarshal(resp.Viewer[k], &cn); err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, cn.Nodes)
+	}
+	for i := range years {
+		var cl struct {
+			CommitContributionsByRepository, IssueContributionsByRepository,
+			PullRequestContributionsByRepository, PullRequestReviewContributionsByRepository byRepo
+		}
+		if err := json.Unmarshal(resp.Viewer[fmt.Sprintf("y%d", i)], &cl); err != nil {
+			return nil, err
+		}
+		var ns []node
+		for _, br := range []byRepo{cl.CommitContributionsByRepository, cl.IssueContributionsByRepository,
+			cl.PullRequestContributionsByRepository, cl.PullRequestReviewContributionsByRepository} {
+			for _, r := range br {
+				ns = append(ns, r.Repository)
+			}
+		}
+		nodes = append(nodes, ns)
+	}
 	var out []Repo
 	seen := map[string]bool{}
-	for i, cn := range []conn{resp.Viewer.Owned, resp.Viewer.Member, resp.Viewer.Contributed} {
-		for _, n := range cn.Nodes {
-			if seen[n.NameWithOwner] {
+	for i, ns := range nodes {
+		for _, n := range ns {
+			// Your own repos past the first Limit come back as contributions: skip them.
+			if seen[n.NameWithOwner] || (i > 0 && strings.HasPrefix(n.NameWithOwner, c.Login+"/")) {
 				continue
 			}
 			seen[n.NameWithOwner] = true
@@ -144,6 +186,21 @@ func (c *Client) Repos() ([]Repo, error) {
 		}
 	}
 	return out, nil
+}
+
+// contributionYears splits created..now into calendar years, newest first:
+// GitHub caps a contributionsCollection at one year.
+func contributionYears(created, now time.Time) [][2]time.Time {
+	var out [][2]time.Time
+	for y := now.UTC().Year(); y >= created.UTC().Year(); y-- {
+		from := time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
+		to := from.AddDate(1, 0, 0).Add(-time.Second)
+		if to.After(now) {
+			to = now.UTC()
+		}
+		out = append(out, [2]time.Time{from, to})
+	}
+	return out
 }
 
 // PRs serves both the PRs view (KindPRs) and the Reviews view (KindReviews).
