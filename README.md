@@ -44,6 +44,7 @@ gitboard shows your GitHub account in one terminal window: your repos (and the o
 | | `o` | Open in your default browser (`$BROWSER` if it exists) |
 | | `p` | Toggle the sidebar (open by default from 120 columns) |
 | | `Ctrl+D` `Ctrl+U` | Scroll the sidebar |
+| | Mouse | Click a tab or a row to select it; the wheel moves the cursor, or scrolls the sidebar under it (hold `Shift` to select text) |
 | | `r` | Reload the current view |
 | | `U` | Install the newer gitboard, when the footer says one is available (needs `go`; reopen to load it) |
 | | `?` | Show every key in the help line |

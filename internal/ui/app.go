@@ -415,6 +415,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if mm, ok := msg.(tea.MouseMsg); ok {
+		cmd = m.handleMouse(mm)
+		return m, cmd
+	}
+
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
@@ -538,6 +543,98 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 	return cmd
 }
 
+// moveBy moves the cursor n rows (negative is up), off any group row.
+func (m *Model) moveBy(n int) tea.Cmd {
+	t := &m.tables[m.active]
+	before := t.Cursor()
+	if n < 0 {
+		t.MoveUp(-n)
+	} else {
+		t.MoveDown(n)
+	}
+	after := t.Cursor()
+	if after == before {
+		return nil
+	}
+	dir := 1
+	if after < before {
+		dir = -1
+	}
+	m.skipGroupRows(m.active, dir)
+	return m.refreshSidebar()
+}
+
+// handleMouse: a click on a tab switches to it, a click on a row selects
+// it, and the wheel moves the cursor, or scrolls the Sidebar under it.
+func (m *Model) handleMouse(msg tea.MouseMsg) tea.Cmd {
+	mo := msg.Mouse()
+	t := &m.tables[m.active]
+	switch msg.(type) {
+	case tea.MouseWheelMsg:
+		up := mo.Button == tea.MouseWheelUp
+		if !up && mo.Button != tea.MouseWheelDown {
+			return nil
+		}
+		if m.sidebarOn && mo.X >= t.Width() {
+			if up {
+				m.vp.ScrollUp(3)
+			} else {
+				m.vp.ScrollDown(3)
+			}
+			return nil
+		}
+		if up {
+			return m.moveBy(-1)
+		}
+		return m.moveBy(1)
+	case tea.MouseClickMsg:
+		if mo.Button != tea.MouseLeft {
+			return nil
+		}
+		if mo.Y == 0 {
+			_, spans := m.headerTabs()
+			for v, s := range spans {
+				if mo.X >= s[0] && mo.X < s[1] {
+					return m.switchTo(v)
+				}
+			}
+			return nil
+		}
+		if mo.X >= t.Width() || len(m.shown[m.active]) == 0 {
+			return nil
+		}
+		top, cur := m.cursorLine()
+		if cur < 0 {
+			return nil
+		}
+		line := mo.Y - 1 - top // the body starts under the header line
+		i := t.Cursor() + line - cur
+		if line < 0 || line >= t.Height() || i < 0 || i >= len(m.shown[m.active]) || m.shown[m.active][i].group {
+			return nil
+		}
+		m.confirm = ""
+		return m.moveBy(i - t.Cursor())
+	}
+	return nil
+}
+
+// cursorLine finds where the table draws its cursor: top is the height of
+// its column titles, cur the cursor's line under them, or -1. The table
+// keeps its scroll offset to itself, so the cursor is found by its style.
+func (m *Model) cursorLine() (top, cur int) {
+	t := m.tables[m.active]
+	lines := strings.Split(t.View(), "\n")
+	top = max(0, len(lines)-t.Height())
+	probe := tableStyles().Selected.Render("x")
+	open := probe[:strings.Index(probe, "x")]
+	for i, l := range lines[top:] {
+		if open != "" && strings.HasPrefix(l, open) {
+			return top, i
+		}
+	}
+	return top, -1
+}
+
 // quickAction runs the single-key command of the active View on it.
 func (m *Model) quickAction(key string, it item) (tea.Cmd, bool) {
 	num := fmt.Sprint(it.number)
@@ -611,7 +708,17 @@ func (m *Model) quickAction(key string, it item) (tea.Cmd, bool) {
 // header drops detail until it fits: first the login, then the counts,
 // then the inactive tabs. Whatever is still too wide is cut.
 func (m Model) header() string {
+	s, _ := m.headerTabs()
+	return s
+}
+
+// headerTabs also says which columns each tab landed on, for clicks; a
+// dropped tab gets an empty span.
+func (m Model) headerTabs() (string, [5][2]int) {
+	var spans [5][2]int
 	tabs := func(counts, onlyActive bool) string {
+		spans = [5][2]int{}
+		x := lipgloss.Width(brand.Render("gitboard"))
 		var out []string
 		for i, v := range views {
 			if onlyActive && i != m.active {
@@ -626,6 +733,9 @@ func (m Model) header() string {
 			} else {
 				out = append(out, tabIdle.Render(label))
 			}
+			w := lipgloss.Width(out[len(out)-1])
+			spans[i] = [2]int{x, x + w}
+			x += w
 		}
 		return strings.Join(out, "")
 	}
@@ -636,15 +746,15 @@ func (m Model) header() string {
 		left := brand.Render("gitboard") + tabs(try.counts, try.onlyActive)
 		if !try.login {
 			if lipgloss.Width(left) <= m.width {
-				return left
+				return left, spans
 			}
 			continue
 		}
 		if gap := m.width - lipgloss.Width(left) - lipgloss.Width(login); gap >= 1 {
-			return left + strings.Repeat(" ", gap) + login
+			return left + strings.Repeat(" ", gap) + login, spans
 		}
 	}
-	return ansi.Truncate(brand.Render("gitboard")+tabs(false, true), m.width, "…")
+	return ansi.Truncate(brand.Render("gitboard")+tabs(false, true), m.width, "…"), spans
 }
 
 func (m Model) body() string {
@@ -754,5 +864,6 @@ func (m Model) View() tea.View {
 	}
 	v := tea.NewView(m.header() + "\n" + body + "\n" + m.footer())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
