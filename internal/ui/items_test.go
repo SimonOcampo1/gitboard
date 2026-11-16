@@ -10,6 +10,17 @@ import (
 	"github.com/SimonOcampo1/gitboard/internal/gh"
 )
 
+func TestFilterByNumberIsExact(t *testing.T) {
+	items := []item{{number: 42, cols: []string{"a", "#42"}}, {number: 420, cols: []string{"b", "#420"}}, {number: 142, cols: []string{"c", "#142"}}}
+	if got := filterItems(items, "#42"); len(got) != 1 || got[0].number != 42 {
+		t.Fatalf("filter #42 = %v", got)
+	}
+	// Without the #, it is a plain text search again.
+	if got := filterItems(items, "42"); len(got) != 3 {
+		t.Fatalf("filter 42 kept %d rows, want 3", len(got))
+	}
+}
+
 func TestFilterItemsIgnoresCase(t *testing.T) {
 	items := []item{{cols: []string{"gitboard", "Go"}}, {cols: []string{"ttt", "Lua"}}}
 	if got := filterItems(items, "GO"); len(got) != 1 || got[0].cols[0] != "gitboard" {
@@ -166,5 +177,42 @@ func TestRepoItemsSplitPersonalAndCollaborated(t *testing.T) {
 	}
 	if g := strings.Join(got, " "); g != "Personal mine  Collaborated org/theirs" {
 		t.Fatalf("got %q", g)
+	}
+}
+func TestPRStatus(t *testing.T) {
+	p := gh.PR{Base: "main", Mergeable: "CONFLICTING", MergeState: "DIRTY", ReviewDecision: "APPROVED",
+		CheckCounts: map[string]int{"FAILURE": 1, "SUCCESS": 9, "SKIPPED": 6, "QUEUED": 0}}
+	got := prStatus(p)
+	for _, want := range []string{"✗ **Conflicts** with `main`", "✗ **Checks**: 1 failed · 9 passed · 6 skipped", "✓ **Approved**"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prStatus missing %q:\n%s", want, got)
+		}
+	}
+	if prState(p) != "conflict" {
+		t.Errorf("state = %q, want conflict", prState(p))
+	}
+	// Nothing failed but something still runs: waiting, not passed.
+	if got := prStatus(gh.PR{MergeState: "CLEAN", CheckCounts: map[string]int{"SUCCESS": 2, "IN_PROGRESS": 1}}); !strings.Contains(got, "◌ **Checks**: 1 running · 2 passed") {
+		t.Errorf("running checks:\n%s", got)
+	}
+}
+
+func TestChecksMarkdownFailedFirst(t *testing.T) {
+	got := checksMarkdown([]gh.Check{{Name: "ok", State: "SUCCESS"}, {Name: "skip", State: "SKIPPED"},
+		{Name: "lint", State: "TIMED_OUT", Required: true}, {Name: "slow", State: "IN_PROGRESS"}})
+	lint, slow, ok := strings.Index(got, "lint"), strings.Index(got, "slow"), strings.Index(got, "**ok**")
+	if !(lint < slow && slow < ok) || strings.Contains(got, "skip**") || !strings.Contains(got, "– 1 skipped") {
+		t.Fatalf("order or skipped wrong:\n%s", got)
+	}
+	if !strings.Contains(got, "**lint** · timed out · required") {
+		t.Fatalf("lint line:\n%s", got)
+	}
+}
+
+func TestDemoteHeadings(t *testing.T) {
+	got := demoteHeadings("### Summary\ntext\n```sh\n# comment\n```\n#41 is not a heading")
+	want := "\n**Summary**\n\ntext\n```sh\n# comment\n```\n#41 is not a heading"
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
 	}
 }

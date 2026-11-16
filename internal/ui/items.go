@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,6 +83,8 @@ func repoItems(rs []gh.Repo, login string) []item {
 
 func prState(p gh.PR) string {
 	switch {
+	case p.Mergeable == "CONFLICTING":
+		return "conflict"
 	case p.Draft:
 		return "draft"
 	case p.ReviewDecision == "APPROVED":
@@ -99,13 +102,175 @@ func prItems(ps []gh.PR, login string) []item {
 		if checks == "" {
 			checks = "none"
 		}
-		md := fmt.Sprintf("# %s\n\n`%s#%d` · %s · checks: %s\n\n%s", p.Title, p.Repo, p.Number, prState(p), strings.ToLower(checks), p.Body)
+		md := fmt.Sprintf("# %s\n\n`%s#%d` · `%s` → `%s`\n\n%s\n\n---\n\n%s", p.Title, p.Repo, p.Number, p.Head, p.Base, prStatus(p), p.Body)
+		repo, number := p.Repo, p.Number
 		out = append(out, item{
-			cols: []string{p.Title, fmt.Sprintf("%s#%d", shortRepo(p.Repo, login), p.Number), prState(p), strings.ToLower(checks), ago(p.UpdatedAt)}, at: p.UpdatedAt,
+			cols: []string{p.Title, shortRepo(p.Repo, login), fmt.Sprintf("#%d", p.Number), prState(p), strings.ToLower(checks), ago(p.UpdatedAt)}, at: p.UpdatedAt,
 			url: p.URL, repo: p.Repo, number: p.Number, md: md,
+			fetch: func(c *gh.Client) (string, error) {
+				checks, cs, err := c.PRDetail(repo, number)
+				return checksMarkdown(checks) + "\n\n" + conversationMarkdown(cs), err
+			},
 		})
 	}
 	return out
+}
+
+// Check buckets: what a reader wants to know of a check, worst first.
+const (
+	failed = iota
+	running
+	passed
+	skipped
+)
+
+var (
+	bucketIcon = [...]string{"✗", "◌", "✓", "–"}
+	bucketWord = [...]string{"failed", "running", "passed", "skipped"}
+)
+
+func checkBucket(state string) int {
+	switch state {
+	case "SUCCESS", "COMPLETED":
+		return passed
+	case "SKIPPED", "NEUTRAL", "STALE":
+		return skipped
+	case "FAILURE", "ERROR", "TIMED_OUT", "STARTUP_FAILURE", "CANCELLED", "ACTION_REQUIRED":
+		return failed
+	}
+	return running // QUEUED, IN_PROGRESS, PENDING, WAITING, EXPECTED...
+}
+
+// prStatus answers "can this merge, and if not why" in three lines:
+// merge state, checks and review, each led by ✓ fine, ✗ in the way,
+// ! a warning, ◌ waiting or – nothing to say.
+func prStatus(p gh.PR) string {
+	base := "`" + p.Base + "`"
+	var merge string
+	switch {
+	case p.MergeState == "DIRTY" || p.Mergeable == "CONFLICTING":
+		merge = "✗ **Conflicts** with " + base + ": resolve them before merging"
+	case p.Draft:
+		merge = "◌ **Draft**: mark it ready for review to merge"
+	case p.MergeState == "BEHIND":
+		merge = "◌ **Behind** " + base + ": update the branch before merging"
+	case p.MergeState == "BLOCKED":
+		merge = "✗ **Blocked**: a required review or check is missing"
+	case p.MergeState == "UNSTABLE":
+		merge = "! **Can merge**, but some checks are not passing"
+	case p.MergeState == "CLEAN" || p.MergeState == "HAS_HOOKS":
+		merge = "✓ **Ready to merge** into " + base
+	default:
+		merge = "◌ **Merge state unknown**: GitHub is still working it out (`r` reloads)"
+	}
+
+	var n [4]int
+	for state, c := range p.CheckCounts {
+		n[checkBucket(state)] += c
+	}
+	var parts []string
+	for b, c := range n {
+		if c > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", c, bucketWord[b]))
+		}
+	}
+	checks := "– **No checks**"
+	if len(parts) > 0 {
+		icon := bucketIcon[passed]
+		for _, b := range []int{failed, running} {
+			if n[b] > 0 {
+				icon = bucketIcon[b]
+				break
+			}
+		}
+		checks = icon + " **Checks**: " + strings.Join(parts, " · ")
+	}
+
+	review := map[string]string{"APPROVED": "✓ **Approved**", "CHANGES_REQUESTED": "✗ **Changes requested**",
+		"REVIEW_REQUIRED": "◌ **Review required**"}[p.ReviewDecision]
+	if review == "" {
+		review = "– **No review required**"
+	}
+	return "- " + merge + "\n- " + checks + "\n- " + review
+}
+
+// checksMarkdown lists every check, failed first. Skipped ones only count:
+// their names are noise.
+func checksMarkdown(cs []gh.Check) string {
+	if len(cs) == 0 {
+		return "---\n\n_No checks._"
+	}
+	sort.SliceStable(cs, func(i, j int) bool { return checkBucket(cs[i].State) < checkBucket(cs[j].State) })
+	var b strings.Builder
+	fmt.Fprintf(&b, "---\n\n## Checks · %d\n", len(cs))
+	nSkipped := 0
+	for _, c := range cs {
+		bk := checkBucket(c.State)
+		if bk == skipped {
+			nSkipped++
+			continue
+		}
+		fmt.Fprintf(&b, "\n- %s **%s**", bucketIcon[bk], c.Name)
+		// The icon already says success or failure; other states add something.
+		if c.State != "SUCCESS" && c.State != "FAILURE" {
+			b.WriteString(" · " + strings.ToLower(strings.ReplaceAll(c.State, "_", " ")))
+		}
+		if c.Required && bk != passed {
+			b.WriteString(" · required")
+		}
+	}
+	if nSkipped > 0 {
+		fmt.Fprintf(&b, "\n- %s %d skipped", bucketIcon[skipped], nSkipped)
+	}
+	return b.String()
+}
+
+// conversationMarkdown renders a PR's comments and reviews for the Sidebar.
+func conversationMarkdown(cs []gh.Comment) string {
+	if len(cs) == 0 {
+		return "---\n\n_No comments or reviews._"
+	}
+	verb := map[string]string{"": "commented", "APPROVED": "approved", "CHANGES_REQUESTED": "requested changes",
+		"COMMENTED": "reviewed", "DISMISSED": "review dismissed", "PENDING": "pending review"}
+	var b strings.Builder
+	fmt.Fprintf(&b, "---\n\n## Conversation · %d", len(cs))
+	for _, c := range cs {
+		v, ok := verb[c.State]
+		if !ok {
+			v = strings.ToLower(c.State)
+		}
+		// Each comment is its own heading, not a quote or a list item:
+		// glamour wraps nested blocks past the width and breaks their lines.
+		fmt.Fprintf(&b, "\n\n### @%s %s · %s", c.Author, v, ago(c.At))
+		if body := strings.TrimSpace(c.Body); body != "" {
+			b.WriteString("\n\n" + demoteHeadings(body))
+		}
+		for _, in := range c.Inline {
+			loc := in.Path
+			if in.Line > 0 {
+				loc += fmt.Sprintf(":%d", in.Line)
+			}
+			b.WriteString("\n\n`" + loc + "`\n\n" + demoteHeadings(strings.TrimSpace(in.Body)))
+		}
+	}
+	return b.String()
+}
+
+// demoteHeadings turns the headings of a comment into bold lines, so they
+// read as part of the comment and not as the next one. Code blocks keep theirs.
+func demoteHeadings(md string) string {
+	lines := strings.Split(md, "\n")
+	code := false
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			code = !code
+		}
+		if h := strings.TrimLeft(t, "#"); !code && len(h) < len(t) && len(t)-len(h) <= 6 && strings.HasPrefix(h, " ") {
+			lines[i] = "\n**" + strings.TrimSpace(h) + "**\n"
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func commitItems(cs []gh.Commit, login string) []item {
@@ -135,7 +300,7 @@ func issueItems(is []gh.Issue, login string) []item {
 			md += " · " + labels
 		}
 		out = append(out, item{
-			cols: []string{i.Title, fmt.Sprintf("%s#%d", shortRepo(i.Repo, login), i.Number), labels, ago(i.UpdatedAt)}, at: i.UpdatedAt,
+			cols: []string{i.Title, shortRepo(i.Repo, login), fmt.Sprintf("#%d", i.Number), labels, ago(i.UpdatedAt)}, at: i.UpdatedAt,
 			url: i.URL, repo: i.Repo, number: i.Number, md: md + "\n\n" + i.Body,
 		})
 	}
@@ -234,14 +399,17 @@ func rowCount(items []item) int {
 }
 
 // filterItems keeps the rows whose visible text contains q, ignoring case.
+// A q like "#42" asks for PR or issue 42 exactly, not 420 or 142.
 func filterItems(items []item, q string) []item {
 	if q == "" {
 		return items
 	}
 	q = strings.ToLower(q)
+	n, err := strconv.Atoi(strings.TrimPrefix(q, "#"))
+	exact := strings.HasPrefix(q, "#") && err == nil
 	var out []item
 	for _, it := range items {
-		if strings.Contains(strings.ToLower(strings.Join(it.cols, " ")), q) {
+		if exact && it.number == n || !exact && strings.Contains(strings.ToLower(strings.Join(it.cols, " ")), q) {
 			out = append(out, it)
 		}
 	}

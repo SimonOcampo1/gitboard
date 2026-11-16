@@ -59,3 +59,21 @@ func TestMouse(t *testing.T) {
 		t.Fatalf("tab click: active %d", a)
 	}
 }
+
+func TestDetail(t *testing.T) {
+	m := New(&gh.Client{Login: "me"}, config.Config{}, "")
+	m.active = vPRs
+	var tm tea.Model = m
+	// Narrow: no Sidebar, yet enter still shows the detail.
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	tm, _ = tm.Update(loadedMsg{view: vPRs, items: []item{{cols: []string{"fix", "r", "#7", "open", "none", "1d"},
+		repo: "me/r", number: 7, url: "u", md: "PR body here", at: time.Now()}}})
+	tm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if v := ansi.Strip(tm.View().Content); !strings.Contains(v, "PR body here") {
+		t.Fatalf("detail does not show the body:\n%s", v)
+	}
+	tm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if v := ansi.Strip(tm.View().Content); strings.Contains(v, "PR body here") || !strings.Contains(v, "#7") {
+		t.Fatalf("esc did not go back to the table:\n%s", v)
+	}
+}

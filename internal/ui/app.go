@@ -56,6 +56,7 @@ type Model struct {
 	sidebarWanted  bool
 	sidebarOn      bool // wanted and it fits
 	vp             viewport.Model
+	detail         bool              // enter: the selected row's Sidebar content, full screen
 	extra          map[string]string // on-demand Sidebar markdown, by item url
 	requested      map[string]bool
 	rendered       map[string]string // glamour output, by width + markdown
@@ -230,6 +231,10 @@ func (m *Model) layout() {
 			tw = m.width
 		}
 	}
+	if m.detail {
+		m.vp.SetWidth(max(10, m.width-2))
+		m.vp.SetHeight(bodyH - 2)
+	}
 	for i := range m.tables {
 		// Grouped by repo, the Repo column is what makes the groups visible.
 		mustKeep := ""
@@ -258,7 +263,7 @@ func (m *Model) layout() {
 // (README, commit files) the first time it is shown.
 func (m *Model) refreshSidebar() tea.Cmd {
 	it, ok := m.selected()
-	if !m.sidebarOn || !ok {
+	if !(m.sidebarOn || m.detail) || !ok {
 		m.vp.SetContent("")
 		return nil
 	}
@@ -415,6 +420,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	if m.detail {
+		cmd = m.updateDetail(msg)
+		return m, cmd
+	}
+
 	if mm, ok := msg.(tea.MouseMsg); ok {
 		cmd = m.handleMouse(mm)
 		return m, cmd
@@ -521,6 +531,13 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+u":
 		m.vp.HalfPageUp()
 		return nil
+	case "enter":
+		if !has {
+			return nil
+		}
+		m.detail = true
+		m.layout()
+		return m.refreshSidebar()
 	}
 
 	if has {
@@ -541,6 +558,53 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		return tea.Batch(cmd, m.refreshSidebar())
 	}
 	return cmd
+}
+
+// updateDetail scrolls the full-screen detail; esc, q or enter go back to
+// the table. The Quick actions of the view still work on the row.
+func (m *Model) updateDetail(msg tea.Msg) tea.Cmd {
+	if w, ok := msg.(tea.MouseWheelMsg); ok {
+		if w.Mouse().Button == tea.MouseWheelUp {
+			m.vp.ScrollUp(3)
+		} else if w.Mouse().Button == tea.MouseWheelDown {
+			m.vp.ScrollDown(3)
+		}
+		return nil
+	}
+	k, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return nil
+	}
+	switch key := k.String(); key {
+	case "esc", "q", "enter", "backspace":
+		m.detail = false
+		m.layout()
+		return m.refreshSidebar()
+	case "ctrl+c":
+		return tea.Quit
+	case "j", "down":
+		m.vp.ScrollDown(1)
+	case "k", "up":
+		m.vp.ScrollUp(1)
+	case "ctrl+d":
+		m.vp.HalfPageDown()
+	case "ctrl+u":
+		m.vp.HalfPageUp()
+	case "space", "pgdown":
+		m.vp.PageDown()
+	case "pgup":
+		m.vp.PageUp()
+	case "g", "home":
+		m.vp.GotoTop()
+	case "G", "end":
+		m.vp.GotoBottom()
+	default:
+		if it, has := m.selected(); has {
+			cmd, _ := m.quickAction(key, it)
+			return cmd
+		}
+	}
+	return nil
 }
 
 // moveBy moves the cursor n rows (negative is up), off any group row.
@@ -767,6 +831,9 @@ func (m Model) body() string {
 	case len(m.shown[v]) == 0:
 		return faint.Render("  nothing here")
 	}
+	if m.detail {
+		return panel.Render(m.vp.View())
+	}
 	t := m.tables[v].View()
 	if !m.sidebarOn {
 		return t
@@ -778,6 +845,10 @@ func (m Model) body() string {
 // ones, wrapped to the terminal width. ? swaps the short list for all of them.
 func (m *Model) helpLines() []string {
 	hints := append([]hint{}, views[m.active].help...)
+	if m.detail {
+		hints = append(hints, hint{"j k", "scroll"}, hint{"^d ^u", "half page"}, hint{"g G", "top/bottom"}, hint{"o", "open"}, hint{"esc", "back"})
+		return wrapHints(hints, m.width)
+	}
 	// In Repos, f focuses the other views on the selected repo, and b
 	// groups into Personal and Collaborated: every row is already a repo.
 	repoKeys := []hint{{"f", "repo"}, {"b", "group"}}
@@ -797,14 +868,19 @@ func (m *Model) helpLines() []string {
 	if m.showHelp {
 		hints = append(hints, hint{"tab ←→", "view"}, hint{"j k", "move"}, hint{"/", "search"})
 		hints = append(hints, repoKeys...)
-		hints = append(hints, hint{"esc", "clear search and repo"}, hint{"o", "open"}, hint{"p", "sidebar"},
+		hints = append(hints, hint{"esc", "clear search and repo"}, hint{"enter", "full screen detail"}, hint{"o", "open"}, hint{"p", "sidebar"},
 			hint{"^d ^u", "scroll sidebar"}, hint{"r", "reload"}, hint{"?", "less"}, hint{"q", "quit"})
 	} else {
 		hints = append(hints, hint{"/", "search"})
 		hints = append(hints, repoKeys...)
-		hints = append(hints, hint{"o", "open"}, hint{"?", "more"}, hint{"q", "quit"})
+		hints = append(hints, hint{"enter", "detail"}, hint{"o", "open"}, hint{"?", "more"}, hint{"q", "quit"})
 	}
-	width := max(20, m.width)
+	return wrapHints(hints, m.width)
+}
+
+// wrapHints lays the hints out in lines no wider than width.
+func wrapHints(hints []hint, width int) []string {
+	width = max(20, width)
 	var lines []string
 	line := ""
 	for _, h := range hints {

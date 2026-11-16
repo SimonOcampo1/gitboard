@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,9 +36,37 @@ type PR struct {
 	URL            string
 	Body           string
 	Draft          bool
-	ReviewDecision string // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED or ""
-	Checks         string // SUCCESS, FAILURE, PENDING... or "" when there are none
+	ReviewDecision string         // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED or ""
+	Checks         string         // SUCCESS, FAILURE, PENDING... or "" when there are none
+	CheckCounts    map[string]int // how many checks are in each state (SUCCESS, FAILURE, SKIPPED...)
+	Base, Head     string         // branch names: Head merges into Base
+	Mergeable      string         // MERGEABLE, CONFLICTING or UNKNOWN
+	MergeState     string         // CLEAN, DIRTY, BEHIND, BLOCKED, UNSTABLE, DRAFT, HAS_HOOKS or UNKNOWN
 	UpdatedAt      time.Time
+}
+
+// Check is one CI check of a PR's last commit: a check run (GitHub
+// Actions and apps) or a commit status.
+type Check struct {
+	Name     string // "Workflow / job" for Actions
+	State    string // its conclusion once done (SUCCESS, FAILURE...), else its status (IN_PROGRESS, QUEUED...)
+	Required bool   // branch protection needs it to pass
+}
+
+// Comment is one entry of a PR's conversation: a plain comment (State
+// "") or a review, with the comments it left on the code.
+type Comment struct {
+	Author string
+	Body   string
+	State  string // review: APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
+	At     time.Time
+	Inline []InlineComment
+}
+
+type InlineComment struct {
+	Path string
+	Line int // 0 when the line is gone from the diff
+	Body string
 }
 
 type Issue struct {
@@ -207,7 +236,13 @@ func contributionYears(created, now time.Time) [][2]time.Time {
 func (c *Client) PRs(k Kind) ([]PR, error) {
 	q := fmt.Sprintf(`query($q: String!) { search(query: $q, type: ISSUE, first: %d) { nodes { ... on PullRequest {
 		number title url body isDraft reviewDecision updatedAt repository { nameWithOwner }
-		commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } } }`, Limit)
+		mergeable mergeStateStatus baseRefName headRefName
+		commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 1) {
+			checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } } } } } }`, Limit)
+	type counts []struct {
+		State string
+		Count int
+	}
 	var resp struct {
 		Search struct {
 			Nodes []struct {
@@ -217,10 +252,17 @@ func (c *Client) PRs(k Kind) ([]PR, error) {
 				ReviewDecision   string
 				UpdatedAt        time.Time
 				Repository       struct{ NameWithOwner string }
+				Mergeable        string
+				MergeStateStatus string
+				BaseRefName      string
+				HeadRefName      string
 				Commits          struct {
 					Nodes []struct {
 						Commit struct {
-							StatusCheckRollup *struct{ State string }
+							StatusCheckRollup *struct {
+								State    string
+								Contexts struct{ CheckRunCountsByState, StatusContextCountsByState counts }
+							}
 						}
 					}
 				}
@@ -233,13 +275,130 @@ func (c *Client) PRs(k Kind) ([]PR, error) {
 	var out []PR
 	for _, n := range resp.Search.Nodes {
 		p := PR{Repo: n.Repository.NameWithOwner, Number: n.Number, Title: n.Title, URL: n.URL, Body: n.Body,
-			Draft: n.IsDraft, ReviewDecision: n.ReviewDecision, UpdatedAt: n.UpdatedAt}
+			Draft: n.IsDraft, ReviewDecision: n.ReviewDecision, UpdatedAt: n.UpdatedAt,
+			Base: n.BaseRefName, Head: n.HeadRefName, Mergeable: n.Mergeable, MergeState: n.MergeStateStatus}
 		if len(n.Commits.Nodes) > 0 && n.Commits.Nodes[0].Commit.StatusCheckRollup != nil {
-			p.Checks = n.Commits.Nodes[0].Commit.StatusCheckRollup.State
+			roll := n.Commits.Nodes[0].Commit.StatusCheckRollup
+			p.Checks = roll.State
+			p.CheckCounts = map[string]int{}
+			for _, cs := range []counts{roll.Contexts.CheckRunCountsByState, roll.Contexts.StatusContextCountsByState} {
+				for _, c := range cs {
+					p.CheckCounts[c.State] += c.Count
+				}
+			}
 		}
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// PRDetail returns the checks of a PR's last commit, and its comments and
+// reviews, oldest first.
+// ponytail: first 100 of each, paginate if a PR ever outgrows that.
+func (c *Client) PRDetail(repo string, number int) ([]Check, []Comment, error) {
+	owner, name, _ := strings.Cut(repo, "/")
+	q := `query($owner: String!, $name: String!, $n: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $n) {
+		commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+			... on CheckRun { name status conclusion isRequired(pullRequestNumber: $n) checkSuite { workflowRun { workflow { name } } } }
+			... on StatusContext { context state isRequired(pullRequestNumber: $n) } } } } } } }
+		comments(first: 100) { nodes { author { login } body createdAt } }
+		reviews(first: 100) { nodes { author { login } body state submittedAt createdAt
+			comments(first: 50) { nodes { path line body } } } } } } }`
+	type author *struct{ Login string }
+	var resp struct {
+		Repository struct {
+			PullRequest struct {
+				Commits struct {
+					Nodes []struct {
+						Commit struct {
+							StatusCheckRollup *struct {
+								Contexts struct {
+									Nodes []struct {
+										Name, Status, Conclusion string // CheckRun
+										Context, State           string // StatusContext
+										IsRequired               bool
+										CheckSuite               *struct {
+											WorkflowRun *struct{ Workflow struct{ Name string } }
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				Comments struct {
+					Nodes []struct {
+						Author    author
+						Body      string
+						CreatedAt time.Time
+					}
+				}
+				Reviews struct {
+					Nodes []struct {
+						Author                 author
+						Body, State            string
+						SubmittedAt, CreatedAt *time.Time
+						Comments               struct {
+							Nodes []struct {
+								Path, Body string
+								Line       *int
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	vars := map[string]interface{}{"owner": owner, "name": name, "n": number}
+	if err := c.gql.Do(q, vars, &resp); err != nil {
+		return nil, nil, err
+	}
+	pr := resp.Repository.PullRequest
+	var checks []Check
+	if ns := pr.Commits.Nodes; len(ns) > 0 && ns[0].Commit.StatusCheckRollup != nil {
+		for _, n := range ns[0].Commit.StatusCheckRollup.Contexts.Nodes {
+			ch := Check{Name: n.Context, State: n.State, Required: n.IsRequired}
+			if n.Context == "" {
+				ch.Name, ch.State = n.Name, n.Status
+				if n.Status == "COMPLETED" {
+					ch.State = n.Conclusion
+				}
+				if n.CheckSuite != nil && n.CheckSuite.WorkflowRun != nil {
+					ch.Name = n.CheckSuite.WorkflowRun.Workflow.Name + " / " + n.Name
+				}
+			}
+			checks = append(checks, ch)
+		}
+	}
+	login := func(a author) string {
+		if a == nil {
+			return "ghost"
+		}
+		return a.Login
+	}
+	var out []Comment
+	for _, n := range pr.Comments.Nodes {
+		out = append(out, Comment{Author: login(n.Author), Body: n.Body, At: n.CreatedAt})
+	}
+	for _, n := range pr.Reviews.Nodes {
+		cm := Comment{Author: login(n.Author), Body: n.Body, State: n.State}
+		// A pending review has not been submitted yet.
+		if n.SubmittedAt != nil {
+			cm.At = *n.SubmittedAt
+		} else if n.CreatedAt != nil {
+			cm.At = *n.CreatedAt
+		}
+		for _, ic := range n.Comments.Nodes {
+			in := InlineComment{Path: ic.Path, Body: ic.Body}
+			if ic.Line != nil {
+				in.Line = *ic.Line
+			}
+			cm.Inline = append(cm.Inline, in)
+		}
+		out = append(out, cm)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	return checks, out, nil
 }
 
 func (c *Client) Issues() ([]Issue, error) {

@@ -44,6 +44,15 @@ _Avoid_: file browser
 The right-hand panel showing the detail of the selected row (README, PR body, commit message and files, issue body). Toggled with `p`; open by default at 120+ columns.
 _Avoid_: preview pane, detail view
 
+**Detail**:
+The Sidebar's content of the selected row, full screen, opened with `enter`. For a PR it holds its **Conversation**.
+
+**Merge status**:
+The three lines on top of a PR's Detail: can it merge (conflicts, behind its base, blocked, ready), how its checks went, and its review decision. Each is led by ✓ fine, ✗ in the way, ! a warning, ◌ waiting or – nothing to say.
+
+**Conversation**:
+A PR's comments and reviews, oldest first, each review with the comments it left on the code.
+
 ## Relationships
 
 - Views 1-3 show **your own work** (Repos also lists repos you only contributed to); views 4-5 show **what others ask of you**

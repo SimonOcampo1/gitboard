@@ -27,7 +27,7 @@ gitboard shows your GitHub account in one terminal window: your repos (and the o
 - Five views, switched with `Tab` or the arrows: Repos, PRs, Commits, Reviews and Issues. All five load in parallel when it starts. Internally every view becomes the same kind of row, which is why search (`/`), sorting (`s`) and the sidebar behave the same in all of them.
 - gitboard never asks you to log in. It borrows the session of the `gh` CLI through `go-gh`, so if `gh auth status` works, gitboard works.
 - `c` clones the selected repo. The prompt starts at the last folder you cloned into, `Tab` completes paths the way your shell does, and `Ctrl+O` opens a small folder browser. If the target folder already exists, it stops and tells you instead of cloning on top of it.
-- The sidebar shows a repo's README, a PR's description and checks, or a commit's full message and the files it touched. It fetches each one the first time you land on the row, renders it with Glamour and keeps it.
+- The sidebar shows a repo's README; for a PR, whether it can merge (conflicts, behind its base, blocked), its checks failed first, its description and its conversation (comments, reviews and the comments they left on the code); or a commit's full message and the files it touched. It fetches each one the first time you land on the row, renders it with Glamour and keeps it.
 - Anything `gh` or `lazygit` already does well is handed to them. Diff, merge and approve call `gh`; `g` opens `lazygit` in your local clone and `n` runs `gh pr create` there.
 - Commits come from GitHub's commit search, which only indexes each repo's default branch. A commit on a feature branch shows up after you merge it. Bot and sync commits are listed too, on purpose.
 
@@ -37,7 +37,8 @@ gitboard shows your GitHub account in one terminal window: your repos (and the o
 |---|---|---|
 | Everywhere | `Tab` / `←` `→` (or `1`-`5`) | Switch view |
 | | `j` `k` | Move |
-| | `/` | Search the rows (`Enter` keeps it, `Esc` clears it) |
+| | `/` | Search the rows (`Enter` keeps it, `Esc` clears it). `#42` finds PR or issue 42 exactly |
+| | `Enter` | The selected row's detail full screen (`j` `k` scroll, `Esc` back); a PR's comments and reviews are read best here |
 | | `f` | Show only the selected row's repo, in every view (`f` again clears it). From Repos it focuses the other views on that repo |
 | | `s` | Sort: newest first, oldest first, A→Z, Z→A |
 | | `b` | Toggle grouping (on by default): rows by repo, most active repo first, each group under its own title. Repos splits into Personal and Collaborated instead |
