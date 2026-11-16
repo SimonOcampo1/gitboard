@@ -35,10 +35,10 @@ func TestMouse(t *testing.T) {
 		t.Fatalf("wheel moved the cursor to %d only", m.tables[vCommits].Cursor())
 	}
 	clicked := 0
-	for y := 1; y < m.bodyHeight()+1; y++ {
+	for y := bodyTop; y < m.bodyHeight()+bodyTop; y++ {
 		m = tm.(Model)
-		line := ansi.Strip(strings.Split(m.tables[vCommits].View(), "\n")[y-1])
-		tm, _ = tm.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 3, Y: y})
+		line := ansi.Strip(strings.Split(m.tables[vCommits].View(), "\n")[y-bodyTop])
+		tm, _ = tm.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 3 + padX, Y: y + padY})
 		if !strings.Contains(line, "commit-") {
 			continue
 		}
@@ -54,7 +54,7 @@ func TestMouse(t *testing.T) {
 	}
 
 	_, spans := m.headerTabs()
-	tm, _ = tm.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: spans[vIssues][0] + 1, Y: 0})
+	tm, _ = tm.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: spans[vIssues][0] + 1 + padX, Y: padY})
 	if a := tm.(Model).active; a != vIssues {
 		t.Fatalf("tab click: active %d", a)
 	}
@@ -110,14 +110,14 @@ func TestDetailOpensTheSelectedRow(t *testing.T) {
 	// Double click on a row opens it.
 	m = tm.(Model)
 	top, cur := m.cursorLine()
-	y := 1 + top + cur - 2 // two rows above the cursor
-	tm, _ = tm.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 3, Y: y})
+	y := bodyTop + top + cur - 2 // two rows above the cursor
+	tm, _ = tm.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 3 + padX, Y: y + padY})
 	m = tm.(Model)
 	clicked, _ := m.selected()
 	if clicked.url == want.url {
 		t.Fatalf("the click did not move off %s", want.cols[0])
 	}
-	tm, _ = tm.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 3, Y: y})
+	tm, _ = tm.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 3 + padX, Y: y + padY})
 	if v := ansi.Strip(tm.View().Content); !tm.(Model).detail || !strings.Contains(v, "body of "+clicked.cols[0]) {
 		t.Fatalf("double click on %s did not open it:\n%s", clicked.cols[0], v)
 	}

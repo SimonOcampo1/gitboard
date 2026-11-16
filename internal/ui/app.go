@@ -62,8 +62,8 @@ type Model struct {
 	requested      map[string]bool
 	rendered       map[string]string // glamour output, by width + markdown
 
-	lastClick    time.Time // when the last row click came, and on which row: two make a double click
-	lastClickRow int
+	lastClick  time.Time // when the last row click came, and on which line: two make a double click
+	lastClickY int
 
 	clone   *clonePopup
 	confirm string // url of the issue waiting for a second x
@@ -214,8 +214,16 @@ func (m *Model) setAllRows() {
 	}
 }
 
+// The board keeps a margin off the terminal's edges, and a blank line
+// between the tabs and the table: bodyTop is the body's first line.
+const (
+	padX    = 2
+	padY    = 1
+	bodyTop = 2
+)
+
 func (m *Model) bodyHeight() int {
-	return max(3, m.height-2-len(m.helpLines())) // header + status + help
+	return max(3, m.height-bodyTop-1-len(m.helpLines())) // header + gap + status + help
 }
 
 func (m *Model) layout() {
@@ -231,7 +239,10 @@ func (m *Model) layout() {
 		for v, url := range at {
 			for i, it := range m.shown[v] {
 				if url != "" && !it.group && it.url == url {
-					m.tables[v].SetCursor(i)
+					// SetCursor does not scroll the table: a far row would
+					// land under its bottom edge. MoveDown scrolls.
+					m.tables[v].GotoTop()
+					m.tables[v].MoveDown(i)
 					break
 				}
 			}
@@ -371,7 +382,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
+		m.width, m.height = max(1, msg.Width-2*padX), max(1, msg.Height-2*padY)
 		m.layout()
 		cmd = m.refreshSidebar()
 		return m, cmd
@@ -659,6 +670,7 @@ func (m *Model) moveBy(n int) tea.Cmd {
 // it and a double click opens it, and the wheel moves the cursor, or scrolls the Sidebar under it.
 func (m *Model) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	mo := msg.Mouse()
+	mo.X, mo.Y = mo.X-padX, mo.Y-padY
 	t := &m.tables[m.active]
 	switch msg.(type) {
 	case tea.MouseWheelMsg:
@@ -682,6 +694,9 @@ func (m *Model) handleMouse(msg tea.MouseMsg) tea.Cmd {
 		if mo.Button != tea.MouseLeft {
 			return nil
 		}
+		if mo.Y < 0 || mo.X < 0 {
+			return nil
+		}
 		if mo.Y == 0 {
 			_, spans := m.headerTabs()
 			for v, s := range spans {
@@ -698,20 +713,21 @@ func (m *Model) handleMouse(msg tea.MouseMsg) tea.Cmd {
 		if cur < 0 {
 			return nil
 		}
-		line := mo.Y - 1 - top // the body starts under the header line
+		line := mo.Y - bodyTop - top
 		i := t.Cursor() + line - cur
 		if line < 0 || line >= t.Height() || i < 0 || i >= len(m.shown[m.active]) || m.shown[m.active][i].group {
 			return nil
 		}
 		m.confirm = ""
-		double := i == m.lastClickRow && time.Since(m.lastClick) < 400*time.Millisecond
-		m.lastClick, m.lastClickRow = time.Now(), i
-		cmd := m.moveBy(i - t.Cursor())
-		if double {
+		// By screen line, not row: the first click can scroll the table,
+		// and then the same line shows another row. The second click
+		// opens the row the first one selected.
+		if mo.Y == m.lastClickY && time.Since(m.lastClick) < 400*time.Millisecond {
 			m.lastClick = time.Time{}
-			return tea.Batch(cmd, m.openDetail())
+			return m.openDetail()
 		}
-		return cmd
+		m.lastClick, m.lastClickY = time.Now(), mo.Y
+		return m.moveBy(i - t.Cursor())
 	}
 	return nil
 }
@@ -972,7 +988,7 @@ func (m Model) View() tea.View {
 	} else {
 		body = lipgloss.NewStyle().Height(bodyH).MaxHeight(bodyH).Render(m.body())
 	}
-	v := tea.NewView(m.header() + "\n" + body + "\n" + m.footer())
+	v := tea.NewView(lipgloss.NewStyle().Padding(padY, padX).Render(m.header() + "\n\n" + body + "\n" + m.footer()))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
