@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/table"
@@ -60,6 +61,9 @@ type Model struct {
 	extra          map[string]string // on-demand Sidebar markdown, by item url
 	requested      map[string]bool
 	rendered       map[string]string // glamour output, by width + markdown
+
+	lastClick    time.Time // when the last row click came, and on which row: two make a double click
+	lastClickRow int
 
 	clone   *clonePopup
 	confirm string // url of the issue waiting for a second x
@@ -215,6 +219,24 @@ func (m *Model) bodyHeight() int {
 }
 
 func (m *Model) layout() {
+	// Rebuilding the rows (below) sends every cursor to the top: remember
+	// the row each was on, by url since grouping moves rows around.
+	var at [5]string
+	for v := range views {
+		if c := m.tables[v].Cursor(); c >= 0 && c < len(m.shown[v]) {
+			at[v] = m.shown[v][c].url
+		}
+	}
+	defer func() {
+		for v, url := range at {
+			for i, it := range m.shown[v] {
+				if url != "" && !it.group && it.url == url {
+					m.tables[v].SetCursor(i)
+					break
+				}
+			}
+		}
+	}()
 	if !m.sidebarToggled {
 		m.sidebarWanted = m.width >= sidebarMinWidth
 	}
@@ -532,12 +554,7 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		m.vp.HalfPageUp()
 		return nil
 	case "enter":
-		if !has {
-			return nil
-		}
-		m.detail = true
-		m.layout()
-		return m.refreshSidebar()
+		return m.openDetail()
 	}
 
 	if has {
@@ -558,6 +575,16 @@ func (m *Model) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		return tea.Batch(cmd, m.refreshSidebar())
 	}
 	return cmd
+}
+
+// openDetail shows the selected row full screen.
+func (m *Model) openDetail() tea.Cmd {
+	if _, ok := m.selected(); !ok {
+		return nil
+	}
+	m.detail = true
+	m.layout()
+	return m.refreshSidebar()
 }
 
 // updateDetail scrolls the full-screen detail; esc, q or enter go back to
@@ -629,7 +656,7 @@ func (m *Model) moveBy(n int) tea.Cmd {
 }
 
 // handleMouse: a click on a tab switches to it, a click on a row selects
-// it, and the wheel moves the cursor, or scrolls the Sidebar under it.
+// it and a double click opens it, and the wheel moves the cursor, or scrolls the Sidebar under it.
 func (m *Model) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	mo := msg.Mouse()
 	t := &m.tables[m.active]
@@ -677,7 +704,14 @@ func (m *Model) handleMouse(msg tea.MouseMsg) tea.Cmd {
 			return nil
 		}
 		m.confirm = ""
-		return m.moveBy(i - t.Cursor())
+		double := i == m.lastClickRow && time.Since(m.lastClick) < 400*time.Millisecond
+		m.lastClick, m.lastClickRow = time.Now(), i
+		cmd := m.moveBy(i - t.Cursor())
+		if double {
+			m.lastClick = time.Time{}
+			return tea.Batch(cmd, m.openDetail())
+		}
+		return cmd
 	}
 	return nil
 }
